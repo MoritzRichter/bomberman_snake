@@ -1,3 +1,2 @@
-gymnasium
 pygame
 numpy

@@ -44,7 +44,8 @@ class Renderer:
         pygame.display.flip()
         self._clock.tick(10)
 
-        # Events abarbeiten damit das Fenster nicht einfriert
+        # Drain the event queue so the OS doesn't mark the window as unresponsive.
+        # main.py processes events before calling draw(), so the queue is usually empty here.
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.close()
@@ -75,7 +76,7 @@ class Renderer:
         self._clock = pygame.time.Clock()
 
     def _build_obs(self, game: GameLogic) -> np.ndarray:
-        """Identische Logik wie BombermanSnakeEnv._get_obs()."""
+        """Build a Cell-valued 10×10 grid from the current game state for rendering."""
         grid = np.zeros((FIELDSIZE, FIELDSIZE), dtype=np.int8)
 
         for y in range(FIELDSIZE):

@@ -7,6 +7,8 @@ from .levels import LEVELS
 
 
 class GameLogic:
+    """Core game state and rules. No rendering — safe to run headless."""
+
     def __init__(self, level: int = 1):
         self.level_id = level
         self.reset()
@@ -91,6 +93,7 @@ class GameLogic:
 
         dx, dy = DIR_DELTA[self.direction]
         hx, hy = self.snake[0]
+        # % FIELDSIZE = wrap-around: snake exits one side and enters the other
         nx = (hx + dx) % FIELDSIZE
         ny = (hy + dy) % FIELDSIZE
 
@@ -126,10 +129,10 @@ class GameLogic:
         """Alle Schlangensegmente ab dem ersten EXPLODED-Feld entfernen."""
         for i, (x, y) in enumerate(self.snake):
             if self.grid[y][x] == FieldType.EXPLODED:
-                if i == 0:
+                if i == 0:  # head is in explosion → instant death
                     self.game_over = True
                     self.snake = []
-                else:
+                else:        # body segment hit → trim tail from that point
                     self.snake = self.snake[:i]
                 return
 
@@ -138,7 +141,8 @@ class GameLogic:
     # ------------------------------------------------------------------
 
     def _cross_field(self, cx: int, cy: int, field_type: FieldType) -> None:
-        """Kreuz-Muster um (cx, cy) setzen, stoppt an Wänden (mit Wrap-around)."""
+        """Kreuz-Muster um (cx, cy) setzen, stoppt an Wänden (mit Wrap-around).
+        Walls block the blast arm but are not destroyed themselves."""
         self.grid[cy][cx] = field_type
 
         for i in range(1, EXPLOSION_REACH + 1):

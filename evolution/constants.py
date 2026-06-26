@@ -56,14 +56,16 @@ class MutationsConfig :
 
 class ScoreConfig :
     def __init__(self) :
-        self.points_towards_food = 1
-        self.points_against_food = -1.5
-        self.points_ate_food     = 2
+        self.points_towards_food  = 1.0
+        self.points_against_food  = -0.5   # lowered: fleeing from bombs should not be heavily punished
+        self.points_ate_food      = 2.0
+        self.points_survived_tick = 0.01   # small reward for staying alive each step
+        self.points_bomb_exploded = 0   # penalty when a bomb explodes (preventable event)
 
 
 class Config :
     def __init__(self) :
-        self.warnings  = True
+        self.warnings  = False
         self.mutations = MutationsConfig()
         self.score     = ScoreConfig()
 

@@ -83,6 +83,10 @@ x86/
 # Visual Studio cache/options directory
 .vs/
 
+#python cache
+__pycache__/
+*.py[cod]
+
 # MSTest test Results
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*

@@ -1,0 +1,436 @@
+"""
+eternity.py — Continuous self-improving training loop (no rendering).
+
+Phase 1 · Bootstrap
+    Train 300 generations from scratch.
+    Check: max(best_score in last 5 gens) > BOOTSTRAP_THRESHOLD.
+    If not → restart from scratch.
+
+Phase 2 · Evolution
+    Use elite seeds from the last successful run.
+    Train 300 generations.
+    Check: median(median_score of last 5 gens) >= prev_run_median × 1.05.
+    If yes  → update seed & prev_median, continue.
+    If no   → retry with the same seed (failure_count += 1).
+    After MAX_FAILURES consecutive failures:
+        Save Eternity package to  Eternity-Run/<timestamp>/
+        Restart from Phase 1.
+
+Outputs per saved package (inside Eternity-Run/<timestamp>_run<N>/):
+    veteran_<timestamp>.pkl
+    elite_<timestamp>.pkl
+    training_report_<timestamp>.csv   (from the last improving run)
+"""
+
+import sys
+import os
+import csv
+import pickle
+import statistics
+from datetime import datetime
+from multiprocessing import Pool
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "evolution"))
+
+from network import buildNetwork
+from evolution import sortPopulation, getOffspring, mutatePopulation, createPopulation
+from constants import config
+from agent import Agent
+from profiles import get_profile, profile_input_size
+
+# ── Config ─────────────────────────────────────────────────────────────────────
+
+GAMES_COUNT          = 50
+GENERATIONS_PER_RUN  = 300
+LEVEL                = 1
+PROFILE_NAME         = "full"
+SELECTION_STRATEGY   = "power"
+ELITISM_RATE         = 0.2
+
+BOOTSTRAP_THRESHOLD  = 1000.0   # bootstrap passes when best_score > this in last WINDOW gens
+IMPROVEMENT_FACTOR   = 1.05     # each evolution run must raise median by this factor
+WINDOW               = 5        # tail window (number of gens) for evaluating a run
+MAX_FAILURES         = 15       # consecutive failures before saving and restarting
+
+# Parallel workers: None = all logical CPU cores, 1 = sequential (no overhead)
+N_WORKERS = None
+
+_HERE        = os.path.dirname(os.path.abspath(__file__))
+ETERNITY_DIR = os.path.join(_HERE, "Eternity-Run")
+_SUMMARY_PATH = os.path.join(ETERNITY_DIR, "eternity_summary.csv")
+
+ELITISM = round(ELITISM_RATE * GAMES_COUNT)
+
+
+# ── Parallel worker (module-level so pickle can reach it on Windows) ────────────
+
+def _eval_brain(args):
+    """Run one complete game for one brain in a worker process. Returns (idx, stats)."""
+    idx, brain, level, max_turns, lowest_score_allowed, profile_name = args
+    profile = get_profile(profile_name)
+    agent   = Agent(level, max_turns, lowest_score_allowed, lambda: None, profile)
+    agent.start(brain)
+    while not agent.done:
+        agent.tick()
+    return idx, {
+        "score"          : brain.score,
+        "turns"          : agent.turns,
+        "food_eaten"     : agent.food_eaten,
+        "score_survival" : agent.score_survival,
+        "score_towards"  : agent.score_towards,
+        "score_against"  : agent.score_against,
+        "score_ate"      : agent.score_ate,
+        "score_bomb"     : agent.score_bomb,
+    }
+
+
+# ── Console helpers ────────────────────────────────────────────────────────────
+
+def _banner(text: str):
+    width = 72
+    print("\n" + "=" * width)
+    print(f"  {text}")
+    print("=" * width)
+
+
+def _sub(text: str):
+    print(f"\n  ── {text}")
+
+
+# ── Core training function (headless) ─────────────────────────────────────────
+
+def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
+    """
+    Run GENERATIONS_PER_RUN generations without any display.
+    pool: multiprocessing.Pool for parallel evaluation, or None for sequential.
+    Returns (results: list[dict], sorted_brains: list, veteran_brain).
+    """
+    profile  = get_profile(PROFILE_NAME)
+    n_inputs = profile_input_size(profile)
+
+    seeds  = [b for b in (seed_brains or []) if getattr(b, "input_size", None) == n_inputs]
+    fresh  = createPopulation(buildNetwork(n_inputs, 2), max(0, GAMES_COUNT - len(seeds)))
+    brains = seeds + fresh
+    for b in brains:
+        b.longevity = getattr(b, "longevity", 0)
+
+    results       = []
+    veteran_brain = None
+    sorted_brains = brains[:]
+
+    for gen in range(GENERATIONS_PER_RUN):
+
+        # ── evaluate all brains (parallel or sequential) ───────────────────
+        args = [
+            (i, b, LEVEL, config.max_turns, config.lowest_score_allowed, PROFILE_NAME)
+            for i, b in enumerate(brains)
+        ]
+        raw = pool.map(_eval_brain, args) if pool is not None else [_eval_brain(a) for a in args]
+
+        # write scores back to brain objects; build per-index stats lookup
+        brain_stats: dict = {}
+        for idx, stats in raw:
+            brains[idx].score = stats["score"]
+            brain_stats[idx]  = stats
+
+        # ── collect stats ──────────────────────────────────────────────────
+        sorted_brains = sortPopulation(brains)
+        scores        = [b.score for b in brains]
+        best_score    = sorted_brains[0].score
+        worst_score   = sorted_brains[-1].score
+        mean_score    = statistics.mean(scores)
+        median_score  = statistics.median(scores)
+
+        turns_list   = [brain_stats[i]["turns"] for i in range(GAMES_COUNT)]
+        best_turns   = max(turns_list)
+        worst_turns  = min(turns_list)
+        median_turns = statistics.median(turns_list)
+
+        best_idx = next(i for i, b in enumerate(brains) if b is sorted_brains[0])
+        ba       = brain_stats[best_idx]
+
+        results.append({
+            "generation"       : gen + 1,
+            "best_score"       : round(best_score,           4),
+            "mean_score"       : round(mean_score,           4),
+            "median_score"     : round(median_score,         4),
+            "worst_score"      : round(worst_score,          4),
+            "best_turns"       : best_turns,
+            "median_turns"     : round(median_turns,         1),
+            "worst_turns"      : worst_turns,
+            "best_food_eaten"  : ba["food_eaten"],
+            "best_sc_survival" : round(ba["score_survival"], 3),
+            "best_sc_towards"  : round(ba["score_towards"],  3),
+            "best_sc_against"  : round(ba["score_against"],  3),
+            "best_sc_ate"      : round(ba["score_ate"],      3),
+            "best_sc_bomb"     : round(ba["score_bomb"],     3),
+        })
+
+        print(
+            f"  [{run_tag} {gen+1:3d}/{GENERATIONS_PER_RUN}]"
+            f"  best {best_score:8.2f}  median {median_score:7.2f}"
+            f"  turns {best_turns:5d}  food {ba['food_eaten']:3d}",
+            flush=True,
+        )
+
+        # ── longevity tracking ─────────────────────────────────────────────
+        for b in sorted_brains[:ELITISM]:
+            b.longevity += 1
+            if veteran_brain is None or b.longevity > veteran_brain.longevity:
+                veteran_brain = b
+
+        # ── evolve (skip on last generation) ──────────────────────────────
+        if gen < GENERATIONS_PER_RUN - 1:
+            elitists  = sorted_brains[:ELITISM]
+            offspring = [
+                getOffspring(sorted_brains, strategy=SELECTION_STRATEGY)
+                for _ in range(GAMES_COUNT - ELITISM)
+            ]
+            mutated = mutatePopulation(offspring, config.mutation_rate, config.mutation_amount)
+            for b in mutated:
+                b.longevity = 0
+            brains = elitists + mutated
+
+    return results, sorted_brains, veteran_brain
+
+
+# ── Stats helpers ──────────────────────────────────────────────────────────────
+
+def tail_stats(results: list, n: int = WINDOW) -> tuple:
+    """Return (max_best_score, median_of_median_scores) over the last n generations."""
+    tail = results[-n:]
+    return (
+        max(r["best_score"]    for r in tail),
+        statistics.median([r["median_score"] for r in tail]),
+    )
+
+
+# ── Persistence ────────────────────────────────────────────────────────────────
+
+_CSV_FIELDS = [
+    "generation",
+    "best_score", "mean_score", "median_score", "worst_score",
+    "best_turns", "median_turns", "worst_turns",
+    "best_food_eaten",
+    "best_sc_survival", "best_sc_towards", "best_sc_against",
+    "best_sc_ate", "best_sc_bomb",
+]
+
+
+def write_csv(results: list, path: str):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
+        writer.writeheader()
+        writer.writerows(results)
+
+
+_SUMMARY_FIELDS = [
+    "rank", "run_index", "timestamp", "final_median",
+    "successful_improvements", "evo_rounds", "boot_attempts", "folder",
+]
+
+
+def update_run_summary(entry: dict):
+    """Append entry to the global summary CSV, re-sort by final_median desc, rewrite with updated ranks."""
+    rows = []
+    if os.path.isfile(_SUMMARY_PATH):
+        with open(_SUMMARY_PATH, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                rows.append({
+                    "run_index"             : int(row["run_index"]),
+                    "timestamp"             : row["timestamp"],
+                    "final_median"          : float(row["final_median"]),
+                    "successful_improvements": int(row["successful_improvements"]),
+                    "evo_rounds"            : int(row["evo_rounds"]),
+                    "boot_attempts"         : int(row["boot_attempts"]),
+                    "folder"                : row["folder"],
+                })
+
+    rows.append({k: v for k, v in entry.items() if k != "rank"})
+    rows.sort(key=lambda r: r["final_median"], reverse=True)
+
+    with open(_SUMMARY_PATH, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=_SUMMARY_FIELDS)
+        writer.writeheader()
+        for rank, row in enumerate(rows, start=1):
+            writer.writerow({**row, "rank": rank})
+
+    print(f"       summary   : {_SUMMARY_PATH}")
+
+
+def save_eternity_package(
+    run_index: int,
+    veteran,
+    elite_brains: list,
+    csv_results: list,
+    final_median: float,
+    evo_rounds: int,
+    successful_improvements: int,
+    boot_attempts: int,
+):
+    """Write veteran + seeds + CSV into a timestamped Eternity-Run sub-folder, then update summary."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    folder    = os.path.join(ETERNITY_DIR, f"{timestamp}_run{run_index:03d}")
+    os.makedirs(folder, exist_ok=True)
+
+    vet_path = os.path.join(folder, f"veteran_{timestamp}.pkl")
+    with open(vet_path, "wb") as f:
+        pickle.dump({
+            "network"      : veteran,
+            "profile_name" : PROFILE_NAME,
+            "longevity"    : getattr(veteran, "longevity", 0),
+        }, f)
+
+    seed_path = os.path.join(folder, f"elite_{timestamp}.pkl")
+    with open(seed_path, "wb") as f:
+        pickle.dump({"brains": elite_brains, "profile_name": PROFILE_NAME}, f)
+
+    csv_path = os.path.join(folder, f"training_report_{timestamp}.csv")
+    write_csv(csv_results, csv_path)
+
+    print(f"\n  ★  Package saved → {folder}")
+    print(f"       veteran   : {os.path.basename(vet_path)}")
+    print(f"       elite     : {os.path.basename(seed_path)}")
+    print(f"       report    : {os.path.basename(csv_path)}")
+
+    update_run_summary({
+        "run_index"              : run_index,
+        "timestamp"              : timestamp,
+        "final_median"           : round(final_median, 4),
+        "successful_improvements": successful_improvements,
+        "evo_rounds"             : evo_rounds,
+        "boot_attempts"          : boot_attempts,
+        "folder"                 : os.path.basename(folder),
+    })
+
+    return folder
+
+
+# ── Main loop ──────────────────────────────────────────────────────────────────
+
+def main():
+    os.makedirs(ETERNITY_DIR, exist_ok=True)
+    run_index  = 0
+    n_workers  = N_WORKERS if N_WORKERS != 1 else None  # 1 → sequential, else pool
+    pool_ctx   = Pool(n_workers) if n_workers != 1 else None
+
+    print(f"Eternity runner started  —  output folder: {ETERNITY_DIR}")
+    print(f"Config: {GAMES_COUNT} agents · {GENERATIONS_PER_RUN} gens/run · "
+          f"profile={PROFILE_NAME} · level={LEVEL}")
+    print(f"Workers: {n_workers or 'all cores'}  |  "
+          f"Bootstrap threshold: best > {BOOTSTRAP_THRESHOLD}  |  "
+          f"Improvement: +{(IMPROVEMENT_FACTOR-1)*100:.0f}% median  |  "
+          f"Max failures: {MAX_FAILURES}")
+
+    try:
+      while True:
+        run_index += 1
+        _banner(f"ETERNITY RUN #{run_index}")
+
+        # ── Phase 1: Bootstrap ─────────────────────────────────────────────
+        boot_attempt = 0
+        while True:
+            boot_attempt += 1
+            _sub(f"Bootstrap attempt #{boot_attempt}")
+            results, sorted_brains, veteran = run_training(
+                seed_brains=None,
+                run_tag=f"Boot{boot_attempt}",
+                pool=pool_ctx,
+            )
+            max_best, boot_median = tail_stats(results)
+            print(
+                f"\n  └ last-{WINDOW} best: {max_best:.2f}  "
+                f"(threshold: {BOOTSTRAP_THRESHOLD})  "
+                f"median: {boot_median:.2f}"
+            )
+            if max_best > BOOTSTRAP_THRESHOLD:
+                print(f"  ✓  Bootstrap passed!")
+                break
+            print(f"  ✗  Bootstrap failed — restarting from scratch")
+
+        # store state after successful bootstrap
+        current_seed          = sorted_brains[:max(ELITISM, 1)]
+        prev_median           = boot_median
+        best_veteran          = veteran
+        last_good_results     = results
+        last_good_elite       = list(current_seed)
+        failure_count         = 0
+        evo_round             = 0
+        successful_improvements = 0
+
+        print(f"\n  Bootstrap median (last {WINDOW} gens): {prev_median:.2f}")
+        _sub("Entering evolution phase")
+
+        # ── Phase 2: Evolution loop ────────────────────────────────────────
+        while failure_count < MAX_FAILURES:
+            evo_round += 1
+            # For positive medians: need +5%. For negative: need /1.05 (less negative).
+            target = prev_median * IMPROVEMENT_FACTOR if prev_median >= 0 else prev_median / IMPROVEMENT_FACTOR
+
+            _sub(
+                f"Evolution round #{evo_round}  |  "
+                f"failures {failure_count}/{MAX_FAILURES}  |  "
+                f"prev median {prev_median:.2f}  →  target ≥ {target:.2f}"
+            )
+
+            results, sorted_brains, veteran = run_training(
+                seed_brains=current_seed,
+                run_tag=f"Evo{evo_round:02d}",
+                pool=pool_ctx,
+            )
+            _, new_median = tail_stats(results)
+
+            change_pct = (new_median / prev_median - 1) * 100 if prev_median != 0 else 0
+            print(
+                f"\n  └ new median: {new_median:.2f}  "
+                f"(prev: {prev_median:.2f}  target: {target:.2f}  "
+                f"change: {change_pct:+.1f}%)"
+            )
+
+            if new_median >= target:
+                print(
+                    f"  ✓  Improved!  {prev_median:.2f} → {new_median:.2f}"
+                    f"  (+{change_pct:.1f}%)  |  failures reset to 0"
+                )
+                failure_count           = 0
+                prev_median             = new_median
+                current_seed            = sorted_brains[:max(ELITISM, 1)]
+                best_veteran            = veteran
+                last_good_results       = results
+                last_good_elite         = list(current_seed)
+                successful_improvements += 1
+            else:
+                failure_count += 1
+                print(
+                    f"  ✗  No improvement  "
+                    f"({new_median:.2f} < {target:.2f})  |  "
+                    f"fail {failure_count}/{MAX_FAILURES}  "
+                    f"— retrying with same seed"
+                )
+                # current_seed stays the same; retry same run
+
+        # ── 15 failures → save package and restart ─────────────────────────
+        _banner(f"RUN #{run_index} COMPLETE — {MAX_FAILURES} consecutive failures reached")
+        print(f"  Best achieved median : {prev_median:.2f}")
+        print(f"  Evolution rounds     : {evo_round}")
+        print(f"  Saving Eternity package ...")
+        save_eternity_package(
+            run_index, best_veteran, last_good_elite, last_good_results,
+            final_median            = prev_median,
+            evo_rounds              = evo_round,
+            successful_improvements = successful_improvements,
+            boot_attempts           = boot_attempt,
+        )
+        print(f"\n  Restarting from scratch (Phase 1)...")
+
+    finally:
+        if pool_ctx is not None:
+            pool_ctx.terminate()
+            pool_ctx.join()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nInterrupted — exiting.")

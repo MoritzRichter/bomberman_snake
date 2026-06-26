@@ -266,12 +266,16 @@ def sortPopulation(population) :
     return sorted(population, key=lambda n: n.score if n.score is not None else float('-inf'), reverse=True)
 
 
-def getOffspring(population) :
-    from selection import powerSelection
+def getOffspring(population, strategy: str = None, **selection_kwargs):
+    from selection import select_parent
     from crossover import crossover
 
-    parent1 = powerSelection(population, config.selection_power)
-    parent2 = powerSelection(population, config.selection_power)
+    if strategy is None:
+        strategy = "power"
+        selection_kwargs.setdefault("power", config.selection_power)
+
+    parent1 = select_parent(population, strategy, **selection_kwargs)
+    parent2 = select_parent(population, strategy, **selection_kwargs)
 
     return crossover(parent1, parent2, equal=False)
 

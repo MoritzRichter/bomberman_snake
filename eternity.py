@@ -141,6 +141,11 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
         mean_score    = statistics.mean(scores)
         median_score  = statistics.median(scores)
 
+        
+        elite_scores = [b.score for b in sorted_brains[:ELITISM]]
+        elite_median = statistics.median(elite_scores)
+        elite_best_score = elite_scores[0]
+
         turns_list   = [brain_stats[i]["turns"] for i in range(GAMES_COUNT)]
         best_turns   = max(turns_list)
         worst_turns  = min(turns_list)
@@ -164,11 +169,12 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
             "best_sc_against"  : round(ba["score_against"],  3),
             "best_sc_ate"      : round(ba["score_ate"],      3),
             "best_sc_bomb"     : round(ba["score_bomb"],     3),
+            "elite_median_score": round(elite_median, 4),
         })
 
         print(
             f"  [{run_tag} {gen+1:3d}/{GENERATIONS_PER_RUN}]"
-            f"  best {best_score:8.2f}  median {median_score:7.2f}"
+            f"  elite-best {elite_best_score:8.2f}  elite-median {elite_median:7.2f}"
             f"  turns {best_turns:5d}  food {ba['food_eaten']:3d}",
             flush=True,
         )
@@ -200,8 +206,10 @@ def tail_stats(results: list, n: int = WINDOW) -> tuple:
     """Return (max_best_score, median_of_median_scores) over the last n generations."""
     tail = results[-n:]
     return (
-        max(r["best_score"]    for r in tail),
-        statistics.median([r["median_score"] for r in tail]),
+        max(r["best_score"] for r in tail),
+        statistics.median(
+            [r["elite_median_score"] for r in tail]
+        ),
     )
 
 
@@ -209,7 +217,8 @@ def tail_stats(results: list, n: int = WINDOW) -> tuple:
 
 _CSV_FIELDS = [
     "generation",
-    "best_score", "mean_score", "median_score", "worst_score",
+    "best_score", "mean_score", "median_score",
+    "elite_median_score", "worst_score",
     "best_turns", "median_turns", "worst_turns",
     "best_food_eaten",
     "best_sc_survival", "best_sc_towards", "best_sc_against",
@@ -225,13 +234,13 @@ def write_csv(results: list, path: str):
 
 
 _SUMMARY_FIELDS = [
-    "rank", "run_index", "timestamp", "final_median",
+    "rank", "run_index", "timestamp", "final_elite_median",
     "successful_improvements", "evo_rounds", "boot_attempts", "folder",
 ]
 
 
 def update_run_summary(entry: dict):
-    """Append entry to the global summary CSV, re-sort by final_median desc, rewrite with updated ranks."""
+    """Append entry to the global summary CSV, re-sort by final_elite_median desc, rewrite with updated ranks."""
     rows = []
     if os.path.isfile(_SUMMARY_PATH):
         with open(_SUMMARY_PATH, newline="", encoding="utf-8") as f:
@@ -239,7 +248,7 @@ def update_run_summary(entry: dict):
                 rows.append({
                     "run_index"             : int(row["run_index"]),
                     "timestamp"             : row["timestamp"],
-                    "final_median"          : float(row["final_median"]),
+                    "final_elite_median": float(row["final_elite_median"]),
                     "successful_improvements": int(row["successful_improvements"]),
                     "evo_rounds"            : int(row["evo_rounds"]),
                     "boot_attempts"         : int(row["boot_attempts"]),
@@ -247,7 +256,7 @@ def update_run_summary(entry: dict):
                 })
 
     rows.append({k: v for k, v in entry.items() if k != "rank"})
-    rows.sort(key=lambda r: r["final_median"], reverse=True)
+    rows.sort(key=lambda r: r["final_elite_median"], reverse=True)
 
     with open(_SUMMARY_PATH, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=_SUMMARY_FIELDS)
@@ -263,7 +272,7 @@ def save_eternity_package(
     veteran,
     elite_brains: list,
     csv_results: list,
-    final_median: float,
+    final_elite_median: float,
     evo_rounds: int,
     successful_improvements: int,
     boot_attempts: int,
@@ -296,7 +305,7 @@ def save_eternity_package(
     update_run_summary({
         "run_index"              : run_index,
         "timestamp"              : timestamp,
-        "final_median"           : round(final_median, 4),
+        "final_elite_median": round(final_elite_median, 4),
         "successful_improvements": successful_improvements,
         "evo_rounds"             : evo_rounds,
         "boot_attempts"          : boot_attempts,
@@ -416,7 +425,7 @@ def main():
         print(f"  Saving Eternity package ...")
         save_eternity_package(
             run_index, best_veteran, last_good_elite, last_good_results,
-            final_median            = prev_median,
+            final_elite_median      = prev_median,
             evo_rounds              = evo_round,
             successful_improvements = successful_improvements,
             boot_attempts           = boot_attempt,

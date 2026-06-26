@@ -71,7 +71,7 @@ class Config :
 
         # Population settings
         self.games_count          = 100
-        self.max_turns            = 5000
+        self.max_turns            = 5000000
         self.lowest_score_allowed = -50
 
         # Evolution settings

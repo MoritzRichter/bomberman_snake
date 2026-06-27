@@ -64,7 +64,7 @@ class MoveHelper :
 
         return True
 
-    def is_food(self, direction: str) -> bool :
+    def is_food(self, direction: str) -> float :
         """True if food lies anywhere in this relative direction (not just the adjacent cell)."""
         head = self.game.snake[0]
 
@@ -114,10 +114,10 @@ class MoveHelper :
         """Snake length normalized to [0, 1] relative to total grid size."""
         return len(self.game.snake) / (FIELDSIZE * FIELDSIZE)
 
-    def is_bomb(self, direction: str) -> bool :
-        """True if an active bomb lies anywhere in this relative direction."""
+    def is_bomb(self, direction: str) -> float :
+        """0.0–1.0: how close an active bomb is in this relative direction (0 = none/far)."""
         if not self.game.bomb or self.game.bomb_pos is None :
-            return False
+            return 0.0
 
         head = self.game.snake[0]
 
@@ -129,65 +129,72 @@ class MoveHelper :
             return self._is_bomb_right(head)
 
 
-# --- Food direction checks (range, not adjacent) -----------------------
+# --- Food direction checks: continuous proximity (0.0 = not in this dir, 1.0 = adjacent) ---
     # y=0 is the bottom row (OpenGL convention), so UP means food_y > head_y
+    # Formula: 1 - dist/FIELDSIZE  (dist=1 → 0.9,  dist=9 → 0.1,  wrong direction → 0.0)
 
-    def _is_food_forward(self, head: tuple) -> bool :
+    def _is_food_forward(self, head: tuple) -> float :
         hx, hy = head
         fx, fy = self.game.food_pos
         d = self.game.direction
-        if d == Direction.RIGHT : return fx > hx
-        if d == Direction.LEFT  : return fx < hx
-        if d == Direction.UP    : return fy > hy
-        if d == Direction.DOWN  : return fy < hy
+        if   d == Direction.RIGHT : dist = fx - hx if fx > hx else 0
+        elif d == Direction.LEFT  : dist = hx - fx if fx < hx else 0
+        elif d == Direction.UP    : dist = fy - hy if fy > hy else 0
+        else                      : dist = hy - fy if fy < hy else 0
+        return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
 
-    def _is_food_left(self, head: tuple) -> bool :
+    def _is_food_left(self, head: tuple) -> float :
         hx, hy = head
         fx, fy = self.game.food_pos
         d = self.game.direction
-        if d == Direction.RIGHT : return fy > hy
-        if d == Direction.UP    : return fx < hx
-        if d == Direction.LEFT  : return fy < hy
-        if d == Direction.DOWN  : return fx > hx
+        if   d == Direction.RIGHT : dist = fy - hy if fy > hy else 0
+        elif d == Direction.UP    : dist = hx - fx if fx < hx else 0
+        elif d == Direction.LEFT  : dist = hy - fy if fy < hy else 0
+        else                      : dist = fx - hx if fx > hx else 0
+        return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
 
-    def _is_food_right(self, head: tuple) -> bool :
+    def _is_food_right(self, head: tuple) -> float :
         hx, hy = head
         fx, fy = self.game.food_pos
         d = self.game.direction
-        if d == Direction.RIGHT : return fy < hy
-        if d == Direction.DOWN  : return fx < hx
-        if d == Direction.LEFT  : return fy > hy
-        if d == Direction.UP    : return fx > hx
+        if   d == Direction.RIGHT : dist = hy - fy if fy < hy else 0
+        elif d == Direction.DOWN  : dist = hx - fx if fx < hx else 0
+        elif d == Direction.LEFT  : dist = fy - hy if fy > hy else 0
+        else                      : dist = fx - hx if fx > hx else 0
+        return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
 
 
-    # --- Bomb direction checks (range, not adjacent) -----------------------
+    # --- Bomb direction checks: continuous proximity (same scheme as food) ---
 
-    def _is_bomb_forward(self, head: tuple) -> bool :
+    def _is_bomb_forward(self, head: tuple) -> float :
         hx, hy = head
         bx, by = self.game.bomb_pos
         d = self.game.direction
-        if d == Direction.RIGHT : return bx > hx
-        if d == Direction.LEFT  : return bx < hx
-        if d == Direction.UP    : return by > hy
-        if d == Direction.DOWN  : return by < hy
+        if   d == Direction.RIGHT : dist = bx - hx if bx > hx else 0
+        elif d == Direction.LEFT  : dist = hx - bx if bx < hx else 0
+        elif d == Direction.UP    : dist = by - hy if by > hy else 0
+        else                      : dist = hy - by if by < hy else 0
+        return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
 
-    def _is_bomb_left(self, head: tuple) -> bool :
+    def _is_bomb_left(self, head: tuple) -> float :
         hx, hy = head
         bx, by = self.game.bomb_pos
         d = self.game.direction
-        if d == Direction.RIGHT : return by > hy
-        if d == Direction.UP    : return bx < hx
-        if d == Direction.LEFT  : return by < hy
-        if d == Direction.DOWN  : return bx > hx
+        if   d == Direction.RIGHT : dist = by - hy if by > hy else 0
+        elif d == Direction.UP    : dist = hx - bx if bx < hx else 0
+        elif d == Direction.LEFT  : dist = hy - by if by < hy else 0
+        else                      : dist = bx - hx if bx > hx else 0
+        return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
 
-    def _is_bomb_right(self, head: tuple) -> bool :
+    def _is_bomb_right(self, head: tuple) -> float :
         hx, hy = head
         bx, by = self.game.bomb_pos
         d = self.game.direction
-        if d == Direction.RIGHT : return by < hy
-        if d == Direction.DOWN  : return bx < hx
-        if d == Direction.LEFT  : return by > hy
-        if d == Direction.UP    : return bx > hx
+        if   d == Direction.RIGHT : dist = hy - by if by < hy else 0
+        elif d == Direction.DOWN  : dist = hx - bx if bx < hx else 0
+        elif d == Direction.LEFT  : dist = by - hy if by > hy else 0
+        else                      : dist = bx - hx if bx > hx else 0
+        return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
 
 
     # --- Shared helpers ----------------------------------------------------
@@ -204,12 +211,12 @@ SENSOR_FUNCS: dict = {
     "can_move_forward" : lambda h: 1 if h.can_move(h.FORWARD) else 0,
     "can_move_left"    : lambda h: 1 if h.can_move(h.LEFT)    else 0,
     "can_move_right"   : lambda h: 1 if h.can_move(h.RIGHT)   else 0,
-    "is_food_forward"  : lambda h: 1 if h.is_food(h.FORWARD)  else 0,
-    "is_food_left"     : lambda h: 1 if h.is_food(h.LEFT)     else 0,
-    "is_food_right"    : lambda h: 1 if h.is_food(h.RIGHT)    else 0,
-    "is_bomb_forward"  : lambda h: 1 if h.is_bomb(h.FORWARD)  else 0,
-    "is_bomb_left"     : lambda h: 1 if h.is_bomb(h.LEFT)     else 0,
-    "is_bomb_right"    : lambda h: 1 if h.is_bomb(h.RIGHT)    else 0,
+    "is_food_forward"  : lambda h: h.is_food(h.FORWARD),
+    "is_food_left"     : lambda h: h.is_food(h.LEFT),
+    "is_food_right"    : lambda h: h.is_food(h.RIGHT),
+    "is_bomb_forward"  : lambda h: h.is_bomb(h.FORWARD),
+    "is_bomb_left"     : lambda h: h.is_bomb(h.LEFT),
+    "is_bomb_right"    : lambda h: h.is_bomb(h.RIGHT),
     "food_timer"       : lambda h: h.food_timer_normalized(),
     "bomb_timer"       : lambda h: h.bomb_timer_normalized(),
     "explosion_active" : lambda h: h.explosion_active(),

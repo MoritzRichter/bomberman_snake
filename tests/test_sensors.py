@@ -249,8 +249,8 @@ class TestGetInputs(unittest.TestCase):
             self.assertGreaterEqual(val, 0.0)
             self.assertLessEqual(val, 2.0)  # max weight in profiles is 2.0
 
-    def test_binary_inputs_are_zero_or_one(self):
-        """First 9 inputs (can_move, is_food, is_bomb) in basic profile must be 0 or 1."""
+    def test_inputs_in_range(self):
+        """All inputs must be in [0.0, 1.0]; can_move stays 0 or 1, food/bomb are continuous."""
         g = make_game()
         g.snake = [(5, 5), (4, 5), (3, 5)]
         g.direction = Direction.RIGHT
@@ -258,8 +258,14 @@ class TestGetInputs(unittest.TestCase):
         g.bomb = False
         g.bomb_pos = None
         h = MoveHelper(g, get_profile("bomb_aware"))
-        for val in h.get_inputs():
+        inputs = h.get_inputs()
+        # can_move sensors (indices 0-2) are still binary
+        for val in inputs[:3]:
             self.assertIn(val, (0, 1))
+        # food/bomb sensors (indices 3-8) are continuous 0.0–1.0
+        for val in inputs[3:]:
+            self.assertGreaterEqual(val, 0.0)
+            self.assertLessEqual(val, 1.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -41,13 +41,13 @@ from profiles import get_profile, profile_input_size
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 GAMES_COUNT          = 50
-GENERATIONS_PER_RUN  = 300
-LEVEL                = 1
+GENERATIONS_PER_RUN  = 100
+LEVEL                = 2
 PROFILE_NAME         = "full"
 SELECTION_STRATEGY   = "power"
 ELITISM_RATE         = 0.2
 
-BOOTSTRAP_THRESHOLD  = 1000.0   # bootstrap passes when best_score > this in last WINDOW gens
+BOOTSTRAP_THRESHOLD  = 500.0   # bootstrap passes when best_score > this in last WINDOW gens
 IMPROVEMENT_FACTOR   = 1.05     # each evolution run must raise median by this factor
 WINDOW               = 5        # tail window (number of gens) for evaluating a run
 MAX_FAILURES         = 15       # consecutive failures before saving and restarting
@@ -55,9 +55,17 @@ MAX_FAILURES         = 15       # consecutive failures before saving and restart
 # Parallel workers: None = all logical CPU cores, 1 = sequential (no overhead)
 N_WORKERS = None
 
-_HERE        = os.path.dirname(os.path.abspath(__file__))
-ETERNITY_DIR = os.path.join(_HERE, "Eternity-Run")
-_SUMMARY_PATH = os.path.join(ETERNITY_DIR, "eternity_summary.csv")
+# Temp-Elite system: high-performing offspring get protected slots for a few generations
+MAX_TEMP_ELITE     = 5     # max extra (non-permanent) slots
+TEMP_PROMOTE_AFTER = 3     # how many consecutive good runs before promotion to permanent elite
+
+# Set True to print Temp-Elite promotions and other internal events
+VERBOSE = False
+
+_HERE          = os.path.dirname(os.path.abspath(__file__))
+ETERNITY_DIR   = os.path.join(_HERE, "Eternity-Run")
+_SUMMARY_PATH  = os.path.join(ETERNITY_DIR, "eternity_summary.csv")
+_CHECKPOINT_DIR = os.path.join(ETERNITY_DIR, "checkpoint")
 
 ELITISM = round(ELITISM_RATE * GAMES_COUNT)
 
@@ -108,8 +116,15 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
     profile  = get_profile(PROFILE_NAME)
     n_inputs = profile_input_size(profile)
 
-    seeds  = [b for b in (seed_brains or []) if getattr(b, "input_size", None) == n_inputs]
-    fresh  = createPopulation(buildNetwork(n_inputs, 2), max(0, GAMES_COUNT - len(seeds)))
+    seeds = [b for b in (seed_brains or []) if getattr(b, "input_size", None) == n_inputs]
+    if seeds:
+        # Derive rest of population from seeds via crossover+mutation — avoids the
+        # "generation-1 crash" where 40 random brains drag the elite-median from 1600 to 700.
+        n_extra   = max(0, GAMES_COUNT - len(seeds))
+        raw_extra = [getOffspring(seeds, strategy=SELECTION_STRATEGY) for _ in range(n_extra)]
+        fresh     = mutatePopulation(raw_extra, config.mutation_rate, config.mutation_amount)
+    else:
+        fresh = createPopulation(buildNetwork(n_inputs, 2), GAMES_COUNT)
     brains = seeds + fresh
     for b in brains:
         b.longevity = getattr(b, "longevity", 0)
@@ -117,6 +132,17 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
     results       = []
     veteran_brain = None
     sorted_brains = brains[:]
+    # temp_pool: list of {'brain': Network, 'count': int}
+    # Each entry is a high-performing non-elite carried over unchanged for TEMP_PROMOTE_AFTER gens.
+    temp_pool: list[dict] = []
+    # Track the worst permanent-elite score from the PREVIOUS generation as the entry/survival
+    # threshold. Non-elites always score ≤ the CURRENT worst elite by sorting definition, so we
+    # compare against the PREVIOUS gen's bar — a brain that beats that bar shows real improvement.
+    prev_worst_elite_score: float = float("-inf")
+    # perm_elite_set: the STABLE permanent elite pool.
+    # Set once in generation 0 by score ranking; from gen 1 onward it only changes
+    # via explicit TempElite promotion (replace worst perm elite with promoted temp).
+    perm_elite_set: list = []
 
     for gen in range(GENERATIONS_PER_RUN):
 
@@ -141,10 +167,11 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
         mean_score    = statistics.mean(scores)
         median_score  = statistics.median(scores)
 
-        
-        elite_scores = [b.score for b in sorted_brains[:ELITISM]]
-        elite_median = statistics.median(elite_scores)
-        elite_best_score = elite_scores[0]
+        # Elite stats: use perm_elite_set scores (gen 0: not set yet, fall back to top-N)
+        ref_elites       = sorted_brains[:ELITISM] if gen == 0 else perm_elite_set
+        elite_scores     = [b.score for b in ref_elites]
+        elite_median     = statistics.median(elite_scores)
+        elite_best_score = max(elite_scores)
 
         turns_list   = [brain_stats[i]["turns"] for i in range(GAMES_COUNT)]
         best_turns   = max(turns_list)
@@ -155,21 +182,21 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
         ba       = brain_stats[best_idx]
 
         results.append({
-            "generation"       : gen + 1,
-            "best_score"       : round(best_score,           4),
-            "mean_score"       : round(mean_score,           4),
-            "median_score"     : round(median_score,         4),
-            "worst_score"      : round(worst_score,          4),
-            "best_turns"       : best_turns,
-            "median_turns"     : round(median_turns,         1),
-            "worst_turns"      : worst_turns,
-            "best_food_eaten"  : ba["food_eaten"],
-            "best_sc_survival" : round(ba["score_survival"], 3),
-            "best_sc_towards"  : round(ba["score_towards"],  3),
-            "best_sc_against"  : round(ba["score_against"],  3),
-            "best_sc_ate"      : round(ba["score_ate"],      3),
-            "best_sc_bomb"     : round(ba["score_bomb"],     3),
-            "elite_median_score": round(elite_median, 4),
+            "generation"        : gen + 1,
+            "best_score"        : round(best_score,           4),
+            "mean_score"        : round(mean_score,           4),
+            "median_score"      : round(median_score,         4),
+            "worst_score"       : round(worst_score,          4),
+            "best_turns"        : best_turns,
+            "median_turns"      : round(median_turns,         1),
+            "worst_turns"       : worst_turns,
+            "best_food_eaten"   : ba["food_eaten"],
+            "best_sc_survival"  : round(ba["score_survival"], 3),
+            "best_sc_towards"   : round(ba["score_towards"],  3),
+            "best_sc_against"   : round(ba["score_against"],  3),
+            "best_sc_ate"       : round(ba["score_ate"],      3),
+            "best_sc_bomb"      : round(ba["score_bomb"],     3),
+            "elite_median_score": round(elite_median,         4),
         })
 
         print(
@@ -179,23 +206,80 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
             flush=True,
         )
 
-        # ── longevity tracking ─────────────────────────────────────────────
-        for b in sorted_brains[:ELITISM]:
-            b.longevity += 1
-            if veteran_brain is None or b.longevity > veteran_brain.longevity:
-                veteran_brain = b
+        # ── GEN 0: establish permanent elite set by score ranking ──────────
+        if gen == 0:
+            perm_elite_set         = list(sorted_brains[:ELITISM])
+            prev_worst_elite_score = perm_elite_set[-1].score
+            for b in perm_elite_set:
+                b.longevity = getattr(b, "longevity", 0) + 1
+                if veteran_brain is None or b.longevity > veteran_brain.longevity:
+                    veteran_brain = b
+
+        # ── GEN 1+: perm_elite_set is fixed; only TempElite changes it ─────
+        else:
+            threshold = prev_worst_elite_score
+            perm_ids  = set(id(b) for b in perm_elite_set)
+
+            # evaluate existing temp elites: must beat prev-gen worst elite every round
+            updated_temp: list[dict] = []
+            for entry in temp_pool:
+                b = entry["brain"]
+                if id(b) in perm_ids:
+                    continue  # runs as permanent elite already — drop from temp list
+                if b.score > threshold:
+                    entry["count"] += 1
+                    if entry["count"] >= TEMP_PROMOTE_AFTER:
+                        worst = min(perm_elite_set, key=lambda x: x.score)
+                        perm_elite_set.remove(worst)
+                        perm_elite_set.append(b)
+                        perm_ids = set(id(x) for x in perm_elite_set)
+                        if VERBOSE:
+                            print(
+                                f"  ↑  Temp-Elite promoted  (score {b.score:.2f}"
+                                f" > threshold {threshold:.2f}  after {entry['count']} gens)",
+                                flush=True,
+                            )
+                        # promoted — don't re-add to updated_temp
+                    else:
+                        updated_temp.append(entry)  # survived, try again
+                # else: b.score ≤ threshold → eliminated
+
+            # find new temp-elite candidates: any brain (not already perm or temp)
+            # that beat the previous gen's worst permanent elite this round
+            existing_ids = set(id(e["brain"]) for e in updated_temp)
+            free_slots   = MAX_TEMP_ELITE - len(updated_temp)
+            for b in sorted_brains:
+                if free_slots <= 0:
+                    break
+                if id(b) not in perm_ids and id(b) not in existing_ids \
+                        and b.score > threshold:
+                    updated_temp.append({"brain": b, "count": 0})
+                    existing_ids.add(id(b))
+                    free_slots -= 1
+
+            temp_pool = updated_temp
+
+            # longevity: only permanent elites count
+            for b in perm_elite_set:
+                b.longevity = getattr(b, "longevity", 0) + 1
+                if veteran_brain is None or b.longevity > veteran_brain.longevity:
+                    veteran_brain = b
+
+            # save threshold for the next generation
+            prev_worst_elite_score = min(b.score for b in perm_elite_set)
 
         # ── evolve (skip on last generation) ──────────────────────────────
         if gen < GENERATIONS_PER_RUN - 1:
-            elitists  = sorted_brains[:ELITISM]
-            offspring = [
+            temp_brains = [e["brain"] for e in temp_pool]
+            n_offspring = GAMES_COUNT - len(perm_elite_set) - len(temp_brains)
+            offspring   = [
                 getOffspring(sorted_brains, strategy=SELECTION_STRATEGY)
-                for _ in range(GAMES_COUNT - ELITISM)
+                for _ in range(n_offspring)
             ]
             mutated = mutatePopulation(offspring, config.mutation_rate, config.mutation_amount)
             for b in mutated:
                 b.longevity = 0
-            brains = elitists + mutated
+            brains = perm_elite_set + temp_brains + mutated
 
     return results, sorted_brains, veteran_brain
 
@@ -231,6 +315,22 @@ def write_csv(results: list, path: str):
         writer = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
         writer.writeheader()
         writer.writerows(results)
+
+
+def save_checkpoint(veteran, elite_brains: list, csv_results: list, label: str = ""):
+    """Overwrite the rolling checkpoint so crashes never lose more than one run's progress."""
+    os.makedirs(_CHECKPOINT_DIR, exist_ok=True)
+    with open(os.path.join(_CHECKPOINT_DIR, "veteran.pkl"), "wb") as f:
+        pickle.dump({
+            "network"      : veteran,
+            "profile_name" : PROFILE_NAME,
+            "longevity"    : getattr(veteran, "longevity", 0),
+        }, f)
+    with open(os.path.join(_CHECKPOINT_DIR, "elite.pkl"), "wb") as f:
+        pickle.dump({"brains": elite_brains, "profile_name": PROFILE_NAME}, f)
+    write_csv(csv_results, os.path.join(_CHECKPOINT_DIR, "training_report.csv"))
+    tag = f"  [{label}]" if label else ""
+    print(f"  💾 Checkpoint updated{tag} → {_CHECKPOINT_DIR}", flush=True)
 
 
 _SUMMARY_FIELDS = [
@@ -354,6 +454,8 @@ def main():
             )
             if max_best > BOOTSTRAP_THRESHOLD:
                 print(f"  ✓  Bootstrap passed!")
+                save_checkpoint(veteran, sorted_brains[:max(ELITISM, 1)], results,
+                                label=f"run{run_index} bootstrap")
                 break
             print(f"  ✗  Bootstrap failed — restarting from scratch")
 
@@ -408,6 +510,8 @@ def main():
                 last_good_results       = results
                 last_good_elite         = list(current_seed)
                 successful_improvements += 1
+                save_checkpoint(veteran, current_seed, results,
+                                label=f"run{run_index} evo#{evo_round}")
             else:
                 failure_count += 1
                 print(
@@ -418,7 +522,7 @@ def main():
                 )
                 # current_seed stays the same; retry same run
 
-        # ── 15 failures → save package and restart ─────────────────────────
+        # ── 10 failures → save package and restart ─────────────────────────
         _banner(f"RUN #{run_index} COMPLETE — {MAX_FAILURES} consecutive failures reached")
         print(f"  Best achieved median : {prev_median:.2f}")
         print(f"  Evolution rounds     : {evo_round}")

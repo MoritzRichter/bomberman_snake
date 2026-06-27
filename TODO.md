@@ -2,50 +2,46 @@
 
 ## Bugs
 
-- [ ] **Body-Kollision in `can_move(LEFT/RIGHT)`** (`sensors.py:56-59`)
-  - `_is_collision` berechnet immer den Forward-Schritt statt die angefragte Richtung
-  - Snake dreht sich und bewegt sich im selben Schritt → LEFT/RIGHT müssen die jeweilige Zelle prüfen
-  - Praktisch kleiner Effekt, aber logisch falsch
+- [x] **Body-Kollision in `can_move(LEFT/RIGHT)`** (`sensors.py`)
+  - `abs_dir` wird jetzt korrekt für LEFT/RIGHT berechnet, bevor `_step()` aufgerufen wird
 
 ---
 
 ## Neue Inputs
 
-Aktuell: 9 Inputs (`can_move` ×3, `is_food` ×3, `is_bomb` ×3)  
-Alle neuen Inputs müssen in `sensors.py:get_inputs()` ergänzt und `INPUT_SIZE` in `train.py` angepasst werden.
+Alle 14 Inputs sind in `sensors.py` + `SENSOR_FUNCS` + `profiles.py` implementiert.
 
-- [ ] **Food-Dringlichkeit** — `game.food_timer / FOOD_STEPS` (0.0–1.0)
-  - Schlange lernt, Essen bei Timer≈1.0 zu meiden und wegzulaufen
-- [ ] **Bomb-Dringlichkeit** — `game.bomb_timer / BOMB_STEPS` (0.0–1.0)
-  - Schlange lernt, wann eine Explosion unmittelbar bevorsteht
-- [ ] **Explosion aktiv** — `1 if game.explosion else 0`
-  - Unterschied zwischen "ruhig" und "EXPLODED-Zellen auf Grid"
-- [ ] **Distanz zum Essen** — `manhattan(head, food_pos) / (2 * FIELDSIZE)` (0.0–1.0)
-  - Statt nur Richtung weiß die Schlange wie weit das Essen entfernt ist
-- [ ] **Schlangenlänge** — `len(game.snake) / (FIELDSIZE * FIELDSIZE)` (0.0–1.0)
-  - Einschätzung des Selbstkollisionsrisikos bei langer Schlange
+- [x] **Food-Dringlichkeit** — `game.food_timer / FOOD_STEPS` (0.0–1.0)
+- [x] **Bomb-Dringlichkeit** — `game.bomb_timer / BOMB_STEPS` (0.0–1.0)
+- [x] **Explosion aktiv** — `1 if game.explosion else 0`
+- [x] **Distanz zum Essen** — `manhattan(head, food_pos) / (2 * FIELDSIZE)` (0.0–1.0)
+- [x] **Schlangenlänge** — `len(game.snake) / (FIELDSIZE * FIELDSIZE)` (0.0–1.0)
+
+Profile: `minimal` (3), `basic` (6), `bomb_aware` (9), `timer` (12), `full` (14)
 
 ---
 
 ## Score-Tuning (`constants.py:ScoreConfig`)
 
-Aktuell:
-```
-points_towards_food = 1
-points_against_food = -1.5
-points_ate_food     = 2
-```
+- [x] `points_against_food = -0.5` — Bomben ausweichen wird nicht stark bestraft
+- [x] `points_survived_tick = 0.01` — kleiner Überlebens-Bonus pro Schritt
+- [x] `points_bomb_exploded = -5` — Schlange lernt aktiv, Bomben zu verhindern
 
-- [ ] `points_against_food` senken (z.B. `-0.5`) — Schlange soll Bomben ausweichen dürfen ohne stark bestraft zu werden
-- [ ] Überlebens-Bonus hinzufügen (`+0.01` pro Tick) — verhindert dass schnelles Sterben eine sinnvolle Strategie wird
-- [ ] Bomben-Explosions-Malus hinzufügen (`-5`) — Schlange lernt aktiv, Bomben zu verhindern
+---
+
+## eternity.py
+
+- [x] Zwischenstand speichern (Checkpoint nach Bootstrap-Erfolg und jeder Evo-Verbesserung)
+- [x] Temp-Elite-System (Top 5 Kandidaten, müssen `TEMP_PROMOTE_AFTER` Runden > schlechtester Perm-Elite bleiben)
+- [x] GPU-Frage → kein Vorteil (NEAT variable Topologie, sequenzieller Game-Loop; CPU-Multiprocessing ist richtig)
+- [x] Seed-Offspring-Fix (neue Gehirne via `getOffspring(seeds)` + `mutatePopulation` statt Random)
+- [x] Stabile Elite-Pool (nur via TempElite-Promotion austauschbar, außer in Generation 0)
 
 ---
 
 ## Experimente
 
 - [ ] Verschiedene Input-Kombinationen testen und CSV-Reports vergleichen
-  - Baseline: aktuelle 9 Inputs
-  - +Timer-Inputs: food_timer + bomb_timer
-  - +Distanz: food distance
-  - Alle neuen Inputs kombiniert
+  - Baseline: `bomb_aware` (9 Inputs)
+  - +Timer-Inputs: `timer` (12 Inputs)
+  - Alle Inputs: `full` (14 Inputs)

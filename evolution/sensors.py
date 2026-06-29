@@ -128,6 +128,26 @@ class MoveHelper :
         if direction == self.RIGHT :
             return self._is_bomb_right(head)
 
+    def body_proximity(self, direction: str) -> float :
+        """0.0–1.0: proximity of the nearest body segment along a ray in this relative direction.
+        0.9 = body 1 cell away (imminent trap), 0.1 = 9 cells away, 0.0 = no body on that axis."""
+        if direction == self.FORWARD :
+            abs_dir = self.game.direction
+        elif direction == self.LEFT :
+            abs_dir = TURN_LEFT[self.game.direction]
+        else :
+            abs_dir = TURN_RIGHT[self.game.direction]
+
+        body_set = set((s[0], s[1]) for s in self.game.snake[1:])
+        dx, dy   = DIR_DELTA[abs_dir]
+        x, y     = self.game.snake[0]
+        for dist in range(1, FIELDSIZE) :
+            x = (x + dx) % FIELDSIZE
+            y = (y + dy) % FIELDSIZE
+            if (x, y) in body_set :
+                return 1.0 - dist / FIELDSIZE
+        return 0.0
+
 
 # --- Food direction checks: continuous proximity (0.0 = not in this dir, 1.0 = adjacent) ---
     # y=0 is the bottom row (OpenGL convention), so UP means food_y > head_y
@@ -222,5 +242,8 @@ SENSOR_FUNCS: dict = {
     "explosion_active" : lambda h: h.explosion_active(),
     "food_distance"    : lambda h: h.food_distance_normalized(),
     "snake_length"     : lambda h: h.snake_length_normalized(),
+    "body_forward"     : lambda h: h.body_proximity(h.FORWARD),
+    "body_left"        : lambda h: h.body_proximity(h.LEFT),
+    "body_right"       : lambda h: h.body_proximity(h.RIGHT),
 }
 

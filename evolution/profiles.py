@@ -5,12 +5,13 @@ Weight = 0.0  → sensor is disabled (not passed to the network)
 Weight = 1.0  → normal signal strength
 Weight > 1.0  → amplified signal (network sees it as more important from the start)
 
-Available sensors (14 total):
-  can_move_forward / can_move_left / can_move_right
-  is_food_forward  / is_food_left  / is_food_right
-  is_bomb_forward  / is_bomb_left  / is_bomb_right
+Available sensors (17 total):
+  can_move_forward / can_move_left / can_move_right   — binary: next cell safe?
+  is_food_forward  / is_food_left  / is_food_right    — continuous: food proximity in direction
+  is_bomb_forward  / is_bomb_left  / is_bomb_right    — continuous: bomb proximity in direction
   food_timer       / bomb_timer    / explosion_active
   food_distance    / snake_length
+  body_forward     / body_left     / body_right        — ray-cast: nearest body segment per axis
 """
 
 PROFILES: dict[str, dict[str, float]] = {
@@ -31,6 +32,9 @@ PROFILES: dict[str, dict[str, float]] = {
         "explosion_active" : 0.0,
         "food_distance"    : 0.0,
         "snake_length"     : 0.0,
+        "body_forward"     : 0.0,
+        "body_left"        : 0.0,
+        "body_right"       : 0.0,
     },
 
     # 6 inputs — safe moves + food direction
@@ -49,9 +53,12 @@ PROFILES: dict[str, dict[str, float]] = {
         "explosion_active" : 0.0,
         "food_distance"    : 0.0,
         "snake_length"     : 0.0,
+        "body_forward"     : 0.0,
+        "body_left"        : 0.0,
+        "body_right"       : 0.0,
     },
 
-    # 9 inputs — adds directional bomb awareness
+    # 12 inputs — bomb awareness + body proximity
     "bomb_aware": {
         "can_move_forward" : 1.0,
         "can_move_left"    : 1.0,
@@ -67,9 +74,12 @@ PROFILES: dict[str, dict[str, float]] = {
         "explosion_active" : 0.0,
         "food_distance"    : 0.0,
         "snake_length"     : 0.0,
+        "body_forward"     : 1.5,
+        "body_left"        : 1.5,
+        "body_right"       : 1.5,
     },
 
-    # 12 inputs — adds urgency timers (food_timer amplified to emphasise danger)
+    # 15 inputs — adds urgency timers + body proximity
     "timer": {
         "can_move_forward" : 1.0,
         "can_move_left"    : 1.0,
@@ -85,9 +95,12 @@ PROFILES: dict[str, dict[str, float]] = {
         "explosion_active" : 1.0,
         "food_distance"    : 0.0,
         "snake_length"     : 0.0,
+        "body_forward"     : 1.5,
+        "body_left"        : 1.5,
+        "body_right"       : 1.5,
     },
 
-    # 14 inputs — everything enabled
+    # 17 inputs — everything enabled
     "full": {
         "can_move_forward" : 1.0,
         "can_move_left"    : 1.0,
@@ -103,6 +116,9 @@ PROFILES: dict[str, dict[str, float]] = {
         "explosion_active" : 1.0,
         "food_distance"    : 1.0,
         "snake_length"     : 1.0,
+        "body_forward"     : 1.5,
+        "body_left"        : 1.5,
+        "body_right"       : 1.5,
     },
 }
 

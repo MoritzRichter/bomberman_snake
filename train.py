@@ -21,7 +21,7 @@ from profiles import get_profile, profile_input_size
 
 GAMES_COUNT         = 50
 GENERATIONS         = 600
-LEVEL               = 1
+LEVEL               = 3
 RENDER_FPS          = 60       # display refresh rate; game logic runs uncapped
 PROFILE_NAME        = "full"   # "basic" | "bomb_aware" | "timer" | "full"
 SELECTION_STRATEGY  = "power"  # "power" | "tournament" | "roulette" | "top_n" | "random"

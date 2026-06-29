@@ -41,22 +41,33 @@ from profiles import get_profile, profile_input_size
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 GAMES_COUNT          = 50
-GENERATIONS_PER_RUN  = 100
-LEVEL                = 2
+GENERATIONS_PER_RUN  = 300
+LEVEL                = 1
 PROFILE_NAME         = "full"
-SELECTION_STRATEGY   = "power"
+SELECTION_STRATEGY   = "power"   # "power" or "tournament"
+SELECTION_POWER      = 4         # bias exponent for power strategy (higher = stronger top-bias)
+TOURNAMENT_K         = 5         # candidates drawn per tournament (higher = more selective)
 ELITISM_RATE         = 0.2
 
-BOOTSTRAP_THRESHOLD  = 500.0   # bootstrap passes when best_score > this in last WINDOW gens
+BOOTSTRAP_THRESHOLD  = 1000.0   # bootstrap passes when best_score > this in last WINDOW gens
 IMPROVEMENT_FACTOR   = 1.05     # each evolution run must raise median by this factor
 WINDOW               = 5        # tail window (number of gens) for evaluating a run
-MAX_FAILURES         = 15       # consecutive failures before saving and restarting
+MAX_FAILURES         = 5        # consecutive failures before saving and restarting
+
+# Multi-game evaluation: each brain plays EVAL_GAMES games; score is the average.
+# Reduces luck-based variance in fitness (lucky/unlucky food placement, bomb timing).
+EVAL_GAMES = 3
+
+# Level rotation: when True each brain plays one game on each of levels 1, 2, 3
+# (overrides LEVEL and sets EVAL_GAMES implicitly to 3).
+# Produces more robust agents at the cost of 3× eval time per generation.
+LEVEL_ROTATION = False
 
 # Parallel workers: None = all logical CPU cores, 1 = sequential (no overhead)
 N_WORKERS = None
 
 # Temp-Elite system: high-performing offspring get protected slots for a few generations
-MAX_TEMP_ELITE     = 5     # max extra (non-permanent) slots
+MAX_TEMP_ELITE     = ELITISM_RATE * 0.5     # max extra (non-permanent) slots
 TEMP_PROMOTE_AFTER = 3     # how many consecutive good runs before promotion to permanent elite
 
 # Set True to print Temp-Elite promotions and other internal events
@@ -73,23 +84,33 @@ ELITISM = round(ELITISM_RATE * GAMES_COUNT)
 # ── Parallel worker (module-level so pickle can reach it on Windows) ────────────
 
 def _eval_brain(args):
-    """Run one complete game for one brain in a worker process. Returns (idx, stats)."""
+    """Evaluate one brain over EVAL_GAMES games; return (idx, averaged stats).
+    agent.start() resets brain.score to 0 each game, so scores are accumulated manually.
+    """
     idx, brain, level, max_turns, lowest_score_allowed, profile_name = args
     profile = get_profile(profile_name)
-    agent   = Agent(level, max_turns, lowest_score_allowed, lambda: None, profile)
-    agent.start(brain)
-    while not agent.done:
-        agent.tick()
-    return idx, {
-        "score"          : brain.score,
-        "turns"          : agent.turns,
-        "food_eaten"     : agent.food_eaten,
-        "score_survival" : agent.score_survival,
-        "score_towards"  : agent.score_towards,
-        "score_against"  : agent.score_against,
-        "score_ate"      : agent.score_ate,
-        "score_bomb"     : agent.score_bomb,
-    }
+
+    levels_to_play = [1, 2, 3] if LEVEL_ROTATION else [level] * EVAL_GAMES
+
+    totals = {k: 0.0 for k in ("score", "turns", "food_eaten", "score_survival",
+                                "score_towards", "score_against", "score_ate", "score_bomb")}
+    for lvl in levels_to_play:
+        agent = Agent(lvl, max_turns, lowest_score_allowed, lambda: None, profile)
+        agent.start(brain)          # resets brain.score = 0
+        while not agent.done:
+            agent.tick()
+        totals["score"]          += brain.score
+        totals["turns"]          += agent.turns
+        totals["food_eaten"]     += agent.food_eaten
+        totals["score_survival"] += agent.score_survival
+        totals["score_towards"]  += agent.score_towards
+        totals["score_against"]  += agent.score_against
+        totals["score_ate"]      += agent.score_ate
+        totals["score_bomb"]     += agent.score_bomb
+
+    n = len(levels_to_play)
+    brain.score = totals["score"] / n
+    return idx, {k: v / n for k, v in totals.items()}
 
 
 # ── Console helpers ────────────────────────────────────────────────────────────
@@ -121,7 +142,9 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
         # Derive rest of population from seeds via crossover+mutation — avoids the
         # "generation-1 crash" where 40 random brains drag the elite-median from 1600 to 700.
         n_extra   = max(0, GAMES_COUNT - len(seeds))
-        raw_extra = [getOffspring(seeds, strategy=SELECTION_STRATEGY) for _ in range(n_extra)]
+        raw_extra = [getOffspring(seeds, strategy=SELECTION_STRATEGY,
+                                   power=SELECTION_POWER, k=TOURNAMENT_K)
+                     for _ in range(n_extra)]
         fresh     = mutatePopulation(raw_extra, config.mutation_rate, config.mutation_amount)
     else:
         fresh = createPopulation(buildNetwork(n_inputs, 2), GAMES_COUNT)
@@ -174,8 +197,8 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
         elite_best_score = max(elite_scores)
 
         turns_list   = [brain_stats[i]["turns"] for i in range(GAMES_COUNT)]
-        best_turns   = max(turns_list)
-        worst_turns  = min(turns_list)
+        best_turns   = round(max(turns_list))
+        worst_turns  = round(min(turns_list))
         median_turns = statistics.median(turns_list)
 
         best_idx = next(i for i, b in enumerate(brains) if b is sorted_brains[0])
@@ -202,7 +225,7 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
         print(
             f"  [{run_tag} {gen+1:3d}/{GENERATIONS_PER_RUN}]"
             f"  elite-best {elite_best_score:8.2f}  elite-median {elite_median:7.2f}"
-            f"  turns {best_turns:5d}  food {ba['food_eaten']:3d}",
+            f"  turns {best_turns:5d}  food {ba['food_eaten']:4.1f}",
             flush=True,
         )
 
@@ -273,7 +296,8 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
             temp_brains = [e["brain"] for e in temp_pool]
             n_offspring = GAMES_COUNT - len(perm_elite_set) - len(temp_brains)
             offspring   = [
-                getOffspring(sorted_brains, strategy=SELECTION_STRATEGY)
+                getOffspring(sorted_brains, strategy=SELECTION_STRATEGY,
+                             power=SELECTION_POWER, k=TOURNAMENT_K)
                 for _ in range(n_offspring)
             ]
             mutated = mutatePopulation(offspring, config.mutation_rate, config.mutation_amount)

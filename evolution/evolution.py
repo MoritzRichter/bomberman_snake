@@ -16,6 +16,7 @@ class MutationType(Enum):
     ADD_CONN = auto()
     REMOVE_CONN = auto()
     MOD_WEIGHT = auto()
+    MOD_WEIGHT_LARGE = auto()
     MOD_BIAS = auto()
     MOD_ACTIVATION = auto()
     SWAP_NODES = auto()
@@ -128,7 +129,7 @@ def mutateRemoveConnection(network: Network) :
 
     return mutatedNetwork
 
-#Randomly changes connection weight of a random connection
+#Randomly changes connection weight of a random connection (small perturbation: ±0.1)
 def mutateConnectionWeight(network: Network) :
     minVal = config.mutations.connectionWeight.min
     maxVal = config.mutations.connectionWeight.max
@@ -141,9 +142,25 @@ def mutateConnectionWeight(network: Network) :
         return network
 
     connection = random.choice(allConnections)
-    modification = random.uniform(minVal, maxVal)
+    connection.weight += random.uniform(minVal, maxVal)
 
-    connection.weight += modification
+    return network
+
+
+#Resets a random connection weight to a new value in [-2.0, 2.0] — escapes local optima
+def mutateConnectionWeightLarge(network: Network) :
+    minVal = config.mutations.connectionWeightLarge.min
+    maxVal = config.mutations.connectionWeightLarge.max
+
+    allConnections = network.connections[:]
+
+    if len(allConnections) == 0 :
+        if config.warnings :
+            print("no connection to mutate")
+        return network
+
+    connection = random.choice(allConnections)
+    connection.weight = random.uniform(minVal, maxVal)
 
     return network
 
@@ -206,17 +223,35 @@ def mutateSwapNodes(network: Network) :
 
 
 mutation = {
-    MutationType.ADD_NODE: mutateAddNode,
-    MutationType.REMOVE_NODE: mutateRemoveNode,
-    MutationType.ADD_CONN: mutateAddConnection,
-    MutationType.REMOVE_CONN: mutateRemoveConnection,
-    MutationType.MOD_WEIGHT: mutateConnectionWeight,
-    MutationType.MOD_BIAS: mutateBias,
-    MutationType.MOD_ACTIVATION: mutateActivationFunction,
-    MutationType.SWAP_NODES: mutateSwapNodes,
+    MutationType.ADD_NODE        : mutateAddNode,
+    MutationType.REMOVE_NODE     : mutateRemoveNode,
+    MutationType.ADD_CONN        : mutateAddConnection,
+    MutationType.REMOVE_CONN     : mutateRemoveConnection,
+    MutationType.MOD_WEIGHT      : mutateConnectionWeight,
+    MutationType.MOD_WEIGHT_LARGE: mutateConnectionWeightLarge,
+    MutationType.MOD_BIAS        : mutateBias,
+    MutationType.MOD_ACTIVATION  : mutateActivationFunction,
+    MutationType.SWAP_NODES      : mutateSwapNodes,
 }
 
 ALL_MUTATIONS = list(mutation.keys())
+
+# Relative probability per mutation type.
+# Fine-tuning (weight/bias) dominates; structural changes are rare.
+# MOD_WEIGHT (small ±0.1) is the most common; MOD_WEIGHT_LARGE (reset ±2.0) is rare.
+# ADD_CONN preferred over ADD_NODE (finer-grained structural change).
+# MOD_ACTIVATION is disruptive like structural, so weighted accordingly.
+MUTATION_WEIGHTS = {
+    MutationType.ADD_NODE        : 1,
+    MutationType.REMOVE_NODE     : 1,
+    MutationType.ADD_CONN        : 2,
+    MutationType.REMOVE_CONN     : 1,
+    MutationType.MOD_WEIGHT      : 4,
+    MutationType.MOD_WEIGHT_LARGE: 1,
+    MutationType.MOD_BIAS        : 3,
+    MutationType.MOD_ACTIVATION  : 2,
+    MutationType.SWAP_NODES      : 3,
+}
 
 
 # -------------------------------------------------------
@@ -224,7 +259,8 @@ ALL_MUTATIONS = list(mutation.keys())
 # -------------------------------------------------------
 
 def selectMutationMethod(possible_mutations) :
-    return random.choice(possible_mutations)
+    weights = [MUTATION_WEIGHTS[m] for m in possible_mutations]
+    return random.choices(possible_mutations, weights=weights, k=1)[0]
 
 
 def mutateNetwork(network: Network, method: MutationType) -> Network :

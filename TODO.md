@@ -36,12 +36,35 @@ Profile: `minimal` (3), `basic` (6), `bomb_aware` (9), `timer` (12), `full` (14)
 - [x] GPU-Frage → kein Vorteil (NEAT variable Topologie, sequenzieller Game-Loop; CPU-Multiprocessing ist richtig)
 - [x] Seed-Offspring-Fix (neue Gehirne via `getOffspring(seeds)` + `mutatePopulation` statt Random)
 - [x] Stabile Elite-Pool (nur via TempElite-Promotion austauschbar, außer in Generation 0)
+- [x] Multi-Game-Evaluation (`EVAL_GAMES = 3`): Score über 3 Spiele mitteln → weniger Zufalls-Rauschen bei Selektion
+- [x] Level-Rotation (`LEVEL_ROTATION = False`): opt-in, spielt ein Spiel pro Level → robustere Agenten
+
+---
+
+## Verbesserungen (offen)
+
+- [ ] **Dynamisches Turn-Limit** — `max_turns = Basis + food_eaten × Bonus` statt fixer 5.000.000
+  - Verhindert "ewig überleben ohne fressen" als stabile Strategie
+  - Umsetzung: `config.max_turns` nach jedem gefressenen Essen dynamisch erhöhen innerhalb des Agents
+
+- [ ] **Tournament-Selection** — K zufällige Gehirne ziehen, besten als Elternteil wählen
+  - Robuster gegen Score-Ausreißer, mehr Populationsdiversität
+  - Parameter: K=5–7; in `selection.py` als neue Strategie `"tournament"` ergänzen
+
+- [ ] **Score-Funktion vereinfachen** — `points_against_food` entfernen, nur `food_eaten` + Überlebensboni
+  - Aktuell: Schlange wird für jeden Schritt weg vom Essen bestraft — auch wenn sie Bombe ausweicht
+  - Führt zu Lernwiderspruch; sparsamere Rewards sind stabiler, aber anfangs schwerer zu lernen
+
+- [ ] **Speziation (echtes NEAT)** — Netzwerke nach Topologie in Species gruppieren, innerhalb Species selektieren
+  - Größter fehlender Baustein: ohne Speziation werden strukturelle Mutationen sofort bestraft bevor sie sich beweisen können
+  - Hoher Implementierungsaufwand; würde Fitness-Sharing und Species-Tracking erfordern
 
 ---
 
 ## Experimente
 
 - [ ] Verschiedene Input-Kombinationen testen und CSV-Reports vergleichen
-  - Baseline: `bomb_aware` (9 Inputs)
-  - +Timer-Inputs: `timer` (12 Inputs)
-  - Alle Inputs: `full` (14 Inputs)
+  - Baseline: `bomb_aware` (12 Inputs)
+  - +Timer-Inputs: `timer` (15 Inputs)
+  - Alle Inputs: `full` (17 Inputs)
+- [ ] `LEVEL_ROTATION = True` vs. `False` vergleichen (Generalisierung vs. Spezialisierung)

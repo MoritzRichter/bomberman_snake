@@ -48,7 +48,8 @@ class SwapNodesConfig :
 
 class MutationsConfig :
     def __init__(self) :
-        self.connectionWeight = WeightConfig(min=-0.5, max=0.5)
+        self.connectionWeight      = WeightConfig(min=-0.1, max=0.1)   # small perturbation
+        self.connectionWeightLarge = WeightConfig(min=-2.0, max=2.0)   # occasional full reset
         self.bias = BiasConfig(min=-0.5, max=0.5)
         self.activationFunction = ActivationFunctionConfig(mutateOutput=False)
         self.swapNodes = SwapNodesConfig(mutateOutput=False)

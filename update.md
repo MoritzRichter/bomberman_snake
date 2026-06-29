@@ -128,3 +128,79 @@ Nach jedem gespeicherten Paket wird die globale Rangliste aller Runs neu geschri
 Alle 50 Agenten pro Generation werden parallel in einem `multiprocessing.Pool` ausgewertet — Speedup ≈ Anzahl CPU-Kerne. Pool wird einmal gestartet und für den gesamten Lauf wiederverwendet.
 - `N_WORKERS = None` → alle logischen Kerne
 - `N_WORKERS = 1` → sequenziell (kein Pool, für Debugging)
+
+---
+
+## 14. Stabile Perm-Elite + TempElite-System — `eternity.py`
+
+### Stabiler Elite-Pool
+- Gen 0: Top-ELITISM-Gehirne werden einmalig per Score-Ranking gesetzt (`perm_elite_set`)
+- Gen 1+: `perm_elite_set` ist eingefroren — kein Re-Ranking, kein automatischer Austausch
+- Änderung nur über TempElite-Promotion möglich
+
+### TempElite-Mechanismus
+- Nicht-Elite-Gehirne die `prev_worst_elite_score` (letzter Gen schlechtester Perm-Elite) schlagen → Temp-Pool
+- Müssen **jede Runde** den Threshold übertreffen (sonst eliminiert)
+- Nach `TEMP_PROMOTE_AFTER = 3` erfolgreichen Runden → ersetzt schlechtesten Perm-Elite
+- Max. `MAX_TEMP_ELITE = 5` geschützte Slots gleichzeitig
+
+### VERBOSE-Flag
+`VERBOSE = False` — TempElite-Promotionsmeldungen standardmäßig stumm; auf `True` für Debug-Output.
+
+---
+
+## 15. Bomben-Malus aktiviert — `evolution/constants.py`
+`points_bomb_exploded = -5` (war `0`). Schlange lernt jetzt aktiv, Bomben zu verhindern.
+
+---
+
+## 16. Kontinuierliche Richtungs-Sensoren — `evolution/sensors.py`
+`is_food_forward/left/right` und `is_bomb_forward/left/right` geben jetzt Distanz-basierte Float-Werte zurück statt binär 0/1:
+- Formel: `1.0 - dist / FIELDSIZE` (Abstand 1 → 0.9, Abstand 9 → 0.1, falsche Richtung → 0.0)
+- `can_move_*` bleibt binär (sicher/nicht sicher)
+- `SENSOR_FUNCS`-Wrapper `1 if ... else 0` entfernt
+
+---
+
+## 17. Body-Proximity-Sensoren — `evolution/sensors.py` + `profiles.py`
+Drei neue Sensoren: `body_forward`, `body_left`, `body_right`
+- Wirft einen Strahl entlang der jeweiligen Achse und findet das nächste eigene Körpersegment
+- Gleiche Distanz-Formel wie Richtungs-Sensoren; 0.0 = kein Körper auf der Achse
+- Gewicht 1.5 in `bomb_aware`, `timer`, `full` (höher gewichtet als Standard, da Körperkollision häufigste Todesursache)
+- Profile-Inputzahlen: `bomb_aware` 9→12, `timer` 12→15, `full` 14→17
+
+---
+
+## 18. Mutations-Gewichte — `evolution/evolution.py`
+
+### Gewichtete Mutations-Auswahl
+`random.choice` → `random.choices` mit `MUTATION_WEIGHTS`. Parametrische Mutationen 3× häufiger als strukturelle:
+- Strukturell (ADD/REMOVE Node/Conn): Gewicht 1 je, außer ADD_CONN: 2
+- Parametrisch (MOD_WEIGHT, MOD_BIAS, SWAP_NODES): Gewicht 3–4
+- MOD_ACTIVATION: Gewicht 2 (disruptiv wie strukturell)
+
+### Neuer Mutations-Typ: MOD_WEIGHT_LARGE
+- `MOD_WEIGHT` (Gewicht 4): addiert `±0.1` auf ein Gewicht (Feintuning, war ±0.5)
+- `MOD_WEIGHT_LARGE` (Gewicht 1): **setzt** Gewicht auf `uniform(−2.0, +2.0)` (Reset, hilft aus lokalen Optima)
+- `constants.py`: `connectionWeight` ±0.1, neues `connectionWeightLarge` ±2.0
+
+---
+
+## 19. Multi-Game-Evaluation + Level-Rotation — `eternity.py`
+
+### Multi-Game (EVAL_GAMES = 3)
+Jedes Gehirn spielt 3 Spiele pro Generation; Score und alle Stats werden gemittelt. Reduziert Zufalls-Rauschen durch zufälliges Food-Placement und Bombe.
+
+### Level-Rotation (LEVEL_ROTATION = False)
+Opt-in: wenn `True`, spielt jedes Gehirn ein Spiel auf Level 1, 2 und 3 statt dreimal dasselbe Level. Produziert robustere Agenten die nicht nur ein Layout auswendig lernen.
+
+---
+
+## 20. Tournament-Selection — `eternity.py`
+Konfigurierbare Eltern-Selektion neben dem bisherigen Power-Modus:
+- `SELECTION_STRATEGY = "power"` (Standard) — exponentieller Bias zu Top-Rängen
+- `SELECTION_STRATEGY = "tournament"` — K zufällige Kandidaten, besten nehmen
+- `SELECTION_POWER = 4` — Stärke des Power-Bias
+- `TOURNAMENT_K = 5` — Kandidatenanzahl pro Tournament
+
+Tournament-Selection ist bereits in `selection.py` implementiert; `eternity.py` übergibt nun `power=` und `k=` an alle `getOffspring`-Aufrufe.

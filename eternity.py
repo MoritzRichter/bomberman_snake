@@ -26,15 +26,17 @@ import sys
 import os
 import csv
 import pickle
+import shutil
 import statistics
 from datetime import datetime
 from multiprocessing import Pool
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "evolution"))
 
+from game.constants import FieldType, Cell, FIELDSIZE
 from network import buildNetwork
 from evolution import sortPopulation, getOffspring, mutatePopulation, createPopulation
-from constants import config
+from constants import config, apply_scoring_preset
 from agent import Agent
 from profiles import get_profile, profile_input_size
 
@@ -44,9 +46,10 @@ GAMES_COUNT          = 50
 GENERATIONS_PER_RUN  = 300
 LEVEL                = 1
 PROFILE_NAME         = "full"
-SELECTION_STRATEGY   = "power"   # "power" or "tournament"
-SELECTION_POWER      = 4         # bias exponent for power strategy (higher = stronger top-bias)
-TOURNAMENT_K         = 5         # candidates drawn per tournament (higher = more selective)
+SELECTION_STRATEGY   = "power"      # "power" or "tournament"
+SELECTION_POWER      = 4            # bias exponent for power strategy (higher = stronger top-bias)
+TOURNAMENT_K         = 5            # candidates drawn per tournament (higher = more selective)
+SCORING_MODE         = "balanced"   # "balanced" | "survival" | "food" | "length"
 ELITISM_RATE         = 0.2
 
 BOOTSTRAP_THRESHOLD  = 1000.0   # bootstrap passes when best_score > this in last WINDOW gens
@@ -73,12 +76,109 @@ TEMP_PROMOTE_AFTER = 3     # how many consecutive good runs before promotion to 
 # Set True to print Temp-Elite promotions and other internal events
 VERBOSE = False
 
-_HERE          = os.path.dirname(os.path.abspath(__file__))
-ETERNITY_DIR   = os.path.join(_HERE, "Eternity-Run")
-_SUMMARY_PATH  = os.path.join(ETERNITY_DIR, "eternity_summary.csv")
+VISUAL           = False   # True = show best brain in a live pygame window between generations
+RENDER_FPS       = 60      # display refresh rate for the visual window
+MAX_VISUAL_TICKS = 3000    # cap each inter-generation demo at this many game ticks
+
+_HERE           = os.path.dirname(os.path.abspath(__file__))
+ETERNITY_DIR    = os.path.join(_HERE, "Eternity-Run")
+_SUMMARY_PATH   = os.path.join(ETERNITY_DIR, "eternity_summary.csv")
 _CHECKPOINT_DIR = os.path.join(ETERNITY_DIR, "checkpoint")
+_PROGRESS_PATH  = os.path.join(_CHECKPOINT_DIR, "progress.csv")
 
 ELITISM = round(ELITISM_RATE * GAMES_COUNT)
+
+
+# ── Visual best-brain demo (optional, pygame) ─────────────────────────────────
+
+_V_CELL_PX  = 24
+_V_HEADER_H = 50
+
+_V_BG     = (20, 20, 20)
+_V_FG     = (200, 200, 200)
+_V_DIM    = (100, 100, 100)
+_V_COLORS = {
+    Cell.FREE       : ( 80,  80,  80),
+    Cell.WALL       : ( 40,  40,  40),
+    Cell.EXPLODED   : (200,  80,  20),
+    Cell.SNAKE_HEAD : (  0, 200,   0),
+    Cell.SNAKE_BODY : (  0, 140,   0),
+    Cell.FOOD       : (210,  40,  40),
+    Cell.BOMB       : ( 80,  80,  20),
+}
+
+
+def _build_obs(game):
+    grid = [[Cell.FREE] * FIELDSIZE for _ in range(FIELDSIZE)]
+    for y in range(FIELDSIZE):
+        for x in range(FIELDSIZE):
+            ft = game.grid[y][x]
+            if ft == FieldType.WALL:
+                grid[y][x] = Cell.WALL
+            elif ft == FieldType.EXPLODED:
+                grid[y][x] = Cell.EXPLODED
+    if game.bomb and game.bomb_pos is not None:
+        bx, by = game.bomb_pos
+        grid[by][bx] = Cell.BOMB
+    fx, fy = game.food_pos
+    if grid[fy][fx] == Cell.FREE:
+        grid[fy][fx] = Cell.FOOD
+    for x, y in game.snake[1:]:
+        grid[y][x] = Cell.SNAKE_BODY
+    if game.snake:
+        hx, hy = game.snake[0]
+        grid[hy][hx] = Cell.SNAKE_HEAD
+    return grid
+
+
+def _run_visual_demo(brain, visual_ctx: dict, header: str):
+    """Run one live game of `brain` in the pygame window. Called between training generations.
+    The window is frozen while pool.map() is running — this only animates between generations.
+    """
+    import pygame
+    surface = visual_ctx["surface"]
+    font    = visual_ctx["font"]
+    clock   = visual_ctx["clock"]
+
+    profile = get_profile(PROFILE_NAME)
+    apply_scoring_preset(SCORING_MODE)
+    agent = Agent(LEVEL, config.max_turns, config.lowest_score_allowed, lambda: None, profile)
+    agent.start(brain)
+
+    _MS_PER_FRAME = 1000 // RENDER_FPS
+    ticks = 0
+
+    while not agent.done and ticks < MAX_VISUAL_TICKS:
+        frame_start = pygame.time.get_ticks()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+        deadline = frame_start + _MS_PER_FRAME - 2
+        while pygame.time.get_ticks() < deadline and not agent.done and ticks < MAX_VISUAL_TICKS:
+            agent.tick()
+            ticks += 1
+
+        surface.fill(_V_BG)
+        obs = _build_obs(agent.game)
+        for y in range(FIELDSIZE):
+            py = _V_HEADER_H + (FIELDSIZE - 1 - y) * _V_CELL_PX
+            for x in range(FIELDSIZE):
+                color = _V_COLORS.get(int(obs[y][x]), _V_COLORS[Cell.FREE])
+                pygame.draw.rect(surface, color, (x * _V_CELL_PX, py, _V_CELL_PX, _V_CELL_PX))
+
+        surface.blit(font.render(header, True, _V_FG), (4, 4))
+        surface.blit(
+            font.render(
+                f"food: {agent.food_eaten}   turns: {agent.turns}   score: {agent.brain.score:.1f}",
+                True, _V_DIM,
+            ),
+            (4, 26),
+        )
+        pygame.display.flip()
+        clock.tick(RENDER_FPS)
 
 
 # ── Parallel worker (module-level so pickle can reach it on Windows) ────────────
@@ -87,7 +187,8 @@ def _eval_brain(args):
     """Evaluate one brain over EVAL_GAMES games; return (idx, averaged stats).
     agent.start() resets brain.score to 0 each game, so scores are accumulated manually.
     """
-    idx, brain, level, max_turns, lowest_score_allowed, profile_name = args
+    idx, brain, level, max_turns, lowest_score_allowed, profile_name, scoring_mode = args
+    apply_scoring_preset(scoring_mode)
     profile = get_profile(profile_name)
 
     levels_to_play = [1, 2, 3] if LEVEL_ROTATION else [level] * EVAL_GAMES
@@ -128,7 +229,7 @@ def _sub(text: str):
 
 # ── Core training function (headless) ─────────────────────────────────────────
 
-def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
+def run_training(seed_brains=None, run_tag="run", pool=None, visual_ctx=None) -> tuple:
     """
     Run GENERATIONS_PER_RUN generations without any display.
     pool: multiprocessing.Pool for parallel evaluation, or None for sequential.
@@ -171,7 +272,7 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
 
         # ── evaluate all brains (parallel or sequential) ───────────────────
         args = [
-            (i, b, LEVEL, config.max_turns, config.lowest_score_allowed, PROFILE_NAME)
+            (i, b, LEVEL, config.max_turns, config.lowest_score_allowed, PROFILE_NAME, SCORING_MODE)
             for i, b in enumerate(brains)
         ]
         raw = pool.map(_eval_brain, args) if pool is not None else [_eval_brain(a) for a in args]
@@ -228,6 +329,14 @@ def run_training(seed_brains=None, run_tag="run", pool=None) -> tuple:
             f"  turns {best_turns:5d}  food {ba['food_eaten']:4.1f}",
             flush=True,
         )
+
+        if visual_ctx is not None:
+            _run_visual_demo(
+                sorted_brains[0],
+                visual_ctx,
+                f"[{run_tag}] Gen {gen+1}/{GENERATIONS_PER_RUN}  "
+                f"best: {best_score:.1f}  elite-med: {elite_median:.1f}",
+            )
 
         # ── GEN 0: establish permanent elite set by score ranking ──────────
         if gen == 0:
@@ -357,6 +466,137 @@ def save_checkpoint(veteran, elite_brains: list, csv_results: list, label: str =
     print(f"  💾 Checkpoint updated{tag} → {_CHECKPOINT_DIR}", flush=True)
 
 
+def _append_progress(results: list, gen_offset: int) -> None:
+    """Append one run's results to the cumulative progress CSV with shifted generation numbers.
+    Bootstrap writes gens 1-300 (offset=0), first evo improvement writes 301-600 (offset=300), etc.
+    """
+    os.makedirs(_CHECKPOINT_DIR, exist_ok=True)
+    write_header = not os.path.isfile(_PROGRESS_PATH)
+    with open(_PROGRESS_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
+        if write_header:
+            writer.writeheader()
+        for row in results:
+            shifted = dict(row)
+            shifted["generation"] = row["generation"] + gen_offset
+            writer.writerow(shifted)
+
+
+def show_eternity_graphs(progress_path: str = None):
+    """Plot cumulative training progress from the progress CSV (same 4-panel layout as train.py).
+    Dashed vertical lines mark each successful phase boundary (every GENERATIONS_PER_RUN gens).
+    """
+    import matplotlib.pyplot as plt
+
+    path = progress_path or _PROGRESS_PATH
+    if not os.path.isfile(path):
+        print("  No progress data to plot yet.")
+        return
+
+    rows = []
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            rows.append(row)
+
+    if not rows:
+        print("  Progress CSV is empty.")
+        return
+
+    def _f(key):
+        return [float(r.get(key) or 0) for r in rows]
+
+    gens          = _f("generation")
+    best_scores   = _f("best_score")
+    mean_scores   = _f("mean_score")
+    median_scores = _f("median_score")
+    elite_medians = _f("elite_median_score")
+    worst_scores  = _f("worst_score")
+    best_turns    = _f("best_turns")
+    median_turns  = _f("median_turns")
+    worst_turns   = _f("worst_turns")
+    food_eaten    = _f("best_food_eaten")
+    sc_survival   = _f("best_sc_survival")
+    sc_towards    = _f("best_sc_towards")
+    sc_against    = _f("best_sc_against")
+    sc_ate        = _f("best_sc_ate")
+    sc_bomb       = _f("best_sc_bomb")
+
+    max_gen     = max(gens) if gens else 0
+    phase_lines = list(range(GENERATIONS_PER_RUN, int(max_gen) + 1, GENERATIONS_PER_RUN))
+
+    def _phase_markers(ax):
+        for i, x in enumerate(phase_lines):
+            ax.axvline(x, color="white", linewidth=0.6, alpha=0.25, linestyle="--")
+            ax.text(x + 1, ax.get_ylim()[1] * 0.97, f"P{i + 2}",
+                    color="white", fontsize=6, alpha=0.4, va="top")
+
+    plt.style.use("dark_background")
+    fig, axes = plt.subplots(2, 2, figsize=(15, 9))
+    fig.suptitle("Bomberman Snake — Eternity Progress (cumulative)", fontsize=13, fontweight="bold")
+    ax1, ax2, ax3, ax4 = axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]
+
+    # ── Score overview ────────────────────────────────────────────────────
+    ax1.plot(gens, best_scores,   color="#00e676", linewidth=1.5, label="Best")
+    ax1.plot(gens, median_scores, color="#ffd740", linewidth=1.5, label="Median")
+    ax1.plot(gens, elite_medians, color="#b39ddb", linewidth=1.0, linestyle="--", label="Elite median", alpha=0.8)
+    ax1.plot(gens, mean_scores,   color="#40c4ff", linewidth=1.0, linestyle="--", label="Mean", alpha=0.6)
+    ax1.plot(gens, worst_scores,  color="#ff5252", linewidth=1.0, label="Worst", alpha=0.6)
+    ax1.fill_between(gens, best_scores, worst_scores, alpha=0.07, color="white")
+    ax1.axhline(0, color="white", linewidth=0.4, alpha=0.35)
+    ax1.set_title("Score (population)", fontsize=10)
+    ax1.set_ylabel("Score")
+    ax1.legend(loc="upper left", fontsize=8)
+    ax1.grid(True, alpha=0.2)
+
+    # ── Turns + food ──────────────────────────────────────────────────────
+    ax2.plot(gens, best_turns,   color="#00e676", linewidth=1.5, label="Best turns")
+    ax2.plot(gens, median_turns, color="#ffd740", linewidth=1.5, label="Median turns")
+    ax2.plot(gens, worst_turns,  color="#ff5252", linewidth=1.0, label="Worst turns", alpha=0.6)
+    ax2.fill_between(gens, best_turns, worst_turns, alpha=0.07, color="white")
+    ax2_r = ax2.twinx()
+    ax2_r.bar(gens, food_eaten, color="#ff9800", alpha=0.3, width=0.8, label="Food eaten (best)")
+    ax2_r.set_ylabel("Food eaten", color="#ff9800", fontsize=8)
+    ax2_r.tick_params(axis="y", labelcolor="#ff9800")
+    ax2.set_title("Turns survived + food eaten (best agent)", fontsize=10)
+    ax2.set_ylabel("Turns")
+    ax2.legend(loc="upper left", fontsize=8)
+    ax2_r.legend(loc="upper right", fontsize=8)
+    ax2.grid(True, alpha=0.2)
+
+    # ── Score gains ───────────────────────────────────────────────────────
+    ax3.plot(gens, sc_survival, color="#40c4ff", linewidth=1.5, label="Survival")
+    ax3.plot(gens, sc_towards,  color="#00e676", linewidth=1.5, label="→ Food (towards)")
+    ax3.plot(gens, sc_ate,      color="#ffd740", linewidth=1.5, label="Ate food")
+    ax3.axhline(0, color="white", linewidth=0.4, alpha=0.35)
+    ax3.set_title("Score breakdown — gains (best agent)", fontsize=10)
+    ax3.set_ylabel("Score contribution")
+    ax3.set_xlabel("Generation")
+    ax3.legend(loc="upper left", fontsize=8)
+    ax3.grid(True, alpha=0.2)
+
+    # ── Score penalties ───────────────────────────────────────────────────
+    ax4.plot(gens, sc_against, color="#ff5252", linewidth=1.5, label="← Food (away)")
+    ax4.plot(gens, sc_bomb,    color="#ff9800", linewidth=1.5, label="Bomb penalty")
+    ax4.axhline(0, color="white", linewidth=0.4, alpha=0.35)
+    ax4.set_title("Score breakdown — penalties (best agent)", fontsize=10)
+    ax4.set_ylabel("Score contribution")
+    ax4.set_xlabel("Generation")
+    ax4.legend(loc="lower left", fontsize=8)
+    ax4.grid(True, alpha=0.2)
+
+    # Phase markers (after all axes are drawn so ylim is set)
+    for ax in (ax1, ax2, ax3, ax4):
+        _phase_markers(ax)
+
+    plt.tight_layout()
+    try:
+        plt.show()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        plt.close("all")
+
+
 _SUMMARY_FIELDS = [
     "rank", "run_index", "timestamp", "final_elite_median",
     "successful_improvements", "evo_rounds", "boot_attempts", "folder",
@@ -421,10 +661,16 @@ def save_eternity_package(
     csv_path = os.path.join(folder, f"training_report_{timestamp}.csv")
     write_csv(csv_results, csv_path)
 
+    progress_dest = os.path.join(folder, "progress.csv")
+    if os.path.isfile(_PROGRESS_PATH):
+        shutil.copy2(_PROGRESS_PATH, progress_dest)
+
     print(f"\n  ★  Package saved → {folder}")
     print(f"       veteran   : {os.path.basename(vet_path)}")
     print(f"       elite     : {os.path.basename(seed_path)}")
     print(f"       report    : {os.path.basename(csv_path)}")
+    if os.path.isfile(_PROGRESS_PATH):
+        print(f"       progress  : progress.csv")
 
     update_run_summary({
         "run_index"              : run_index,
@@ -446,10 +692,24 @@ def main():
     run_index  = 0
     n_workers  = N_WORKERS if N_WORKERS != 1 else None  # 1 → sequential, else pool
     pool_ctx   = Pool(n_workers) if n_workers != 1 else None
+    visual_ctx = None
+
+    if VISUAL:
+        import pygame
+        pygame.init()
+        _win_w = FIELDSIZE * _V_CELL_PX
+        _win_h = FIELDSIZE * _V_CELL_PX + _V_HEADER_H
+        _surf  = pygame.display.set_mode((_win_w, _win_h))
+        pygame.display.set_caption("Bomberman Snake — Eternity (Best Brain)")
+        visual_ctx = {
+            "surface": _surf,
+            "font"   : pygame.font.SysFont(None, 18),
+            "clock"  : pygame.time.Clock(),
+        }
 
     print(f"Eternity runner started  —  output folder: {ETERNITY_DIR}")
     print(f"Config: {GAMES_COUNT} agents · {GENERATIONS_PER_RUN} gens/run · "
-          f"profile={PROFILE_NAME} · level={LEVEL}")
+          f"profile={PROFILE_NAME} · level={LEVEL}  |  visual={VISUAL}")
     print(f"Workers: {n_workers or 'all cores'}  |  "
           f"Bootstrap threshold: best > {BOOTSTRAP_THRESHOLD}  |  "
           f"Improvement: +{(IMPROVEMENT_FACTOR-1)*100:.0f}% median  |  "
@@ -458,6 +718,11 @@ def main():
     try:
       while True:
         run_index += 1
+        gen_offset = 0
+        # Fresh progress CSV for each eternity run
+        if os.path.isfile(_PROGRESS_PATH):
+            os.remove(_PROGRESS_PATH)
+
         _banner(f"ETERNITY RUN #{run_index}")
 
         # ── Phase 1: Bootstrap ─────────────────────────────────────────────
@@ -469,6 +734,7 @@ def main():
                 seed_brains=None,
                 run_tag=f"Boot{boot_attempt}",
                 pool=pool_ctx,
+                visual_ctx=visual_ctx,
             )
             max_best, boot_median = tail_stats(results)
             print(
@@ -480,6 +746,8 @@ def main():
                 print(f"  ✓  Bootstrap passed!")
                 save_checkpoint(veteran, sorted_brains[:max(ELITISM, 1)], results,
                                 label=f"run{run_index} bootstrap")
+                _append_progress(results, gen_offset)
+                gen_offset += GENERATIONS_PER_RUN
                 break
             print(f"  ✗  Bootstrap failed — restarting from scratch")
 
@@ -512,6 +780,7 @@ def main():
                 seed_brains=current_seed,
                 run_tag=f"Evo{evo_round:02d}",
                 pool=pool_ctx,
+                visual_ctx=visual_ctx,
             )
             _, new_median = tail_stats(results)
 
@@ -534,6 +803,8 @@ def main():
                 last_good_results       = results
                 last_good_elite         = list(current_seed)
                 successful_improvements += 1
+                _append_progress(results, gen_offset)
+                gen_offset += GENERATIONS_PER_RUN
                 save_checkpoint(veteran, current_seed, results,
                                 label=f"run{run_index} evo#{evo_round}")
             else:
@@ -558,16 +829,21 @@ def main():
             successful_improvements = successful_improvements,
             boot_attempts           = boot_attempt,
         )
+        show_eternity_graphs()
         print(f"\n  Restarting from scratch (Phase 1)...")
 
     finally:
         if pool_ctx is not None:
             pool_ctx.terminate()
             pool_ctx.join()
+        if visual_ctx is not None:
+            import pygame
+            pygame.quit()
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\nInterrupted — exiting.")
+        print("\n\nInterrupted — showing progress graphs...")
+        show_eternity_graphs()

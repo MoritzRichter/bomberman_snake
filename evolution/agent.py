@@ -100,6 +100,12 @@ class Agent :
         self._add_score(pts)
         self.score_survival += pts
 
+        # Length bonus: reward proportional to current snake size (length mode)
+        if config.score.points_per_length_tick != 0.0 :
+            pts = config.score.points_per_length_tick * len(self.game.snake)
+            self._add_score(pts)
+            self.score_survival += pts
+
         if self._is_over() :
             self._done = True
 

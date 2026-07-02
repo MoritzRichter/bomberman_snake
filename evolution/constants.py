@@ -57,11 +57,12 @@ class MutationsConfig :
 
 class ScoreConfig :
     def __init__(self) :
-        self.points_towards_food  = 1.0
-        self.points_against_food  = -0.5   # lowered: fleeing from bombs should not be heavily punished
-        self.points_ate_food      = 5.0
-        self.points_survived_tick = 0.03   # small reward for staying alive each step
-        self.points_bomb_exploded = -1.0 # penalty when a bomb explodes (preventable event)
+        self.points_towards_food    = 1.0
+        self.points_against_food    = -0.5
+        self.points_ate_food        = 5.0
+        self.points_survived_tick   = 0.03
+        self.points_bomb_exploded   = -1.0
+        self.points_per_length_tick = 0.0   # bonus per body segment per tick (length mode)
 
 
 class Config :
@@ -83,3 +84,58 @@ class Config :
 
 
 config = Config()
+
+
+# ── Scoring presets ────────────────────────────────────────────────────────────
+# Each preset overrides all ScoreConfig fields.  Switch via apply_scoring_preset().
+
+SCORING_PRESETS: dict[str, dict] = {
+
+    # Standard-Modus: ausgewogenes Verhältnis aller Score-Komponenten
+    "balanced": {
+        "points_towards_food"    :  1.0,
+        "points_against_food"    : -0.5,
+        "points_ate_food"        :  5.0,
+        "points_survived_tick"   :  0.03,
+        "points_bomb_exploded"   : -1.0,
+        "points_per_length_tick" :  0.0,
+    },
+
+    # Überleben: möglichst lange am Leben bleiben
+    "survival": {
+        "points_towards_food"    :  0.3,
+        "points_against_food"    : -0.1,
+        "points_ate_food"        :  1.0,
+        "points_survived_tick"   :  1.15,
+        "points_bomb_exploded"   : -1.0,
+        "points_per_length_tick" :  0.0,
+    },
+
+    # Fresser: möglichst viel Essen in kürzester Zeit
+    "food": {
+        "points_towards_food"    :  3.0,
+        "points_against_food"    : -2.0,
+        "points_ate_food"        : 25.0,
+        "points_survived_tick"   :  0.0,
+        "points_bomb_exploded"   : -15.0,
+        "points_per_length_tick" :  0.0,
+    },
+
+    # Länge: möglichst lange Schlange; jedes Segment gibt Bonus pro Tick
+    "length": {
+        "points_towards_food"    :  1.0,
+        "points_against_food"    : -0.3,
+        "points_ate_food"        : 10.0,
+        "points_survived_tick"   :  0.0,
+        "points_bomb_exploded"   : -5.0,
+        "points_per_length_tick" :  0.02,  # × len(snake) pro Tick
+    },
+}
+
+
+def apply_scoring_preset(name: str) -> None:
+    """Apply a named scoring preset to the global config object."""
+    if name not in SCORING_PRESETS:
+        raise ValueError(f"Unknown scoring preset '{name}'. Choose from: {list(SCORING_PRESETS)}")
+    for attr, value in SCORING_PRESETS[name].items():
+        setattr(config.score, attr, value)

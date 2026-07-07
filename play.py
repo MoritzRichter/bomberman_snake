@@ -2,10 +2,14 @@
 play.py — Watch a saved veteran network play Bomberman Snake.
 
 Controls (selection screen):
-  Click         — select file / level
+  Click         — select file / level / options
   Enter         — start game
   1 / 2 / 3    — quick level select
   Q             — quit
+
+Options (buttons on the selection screen):
+  Essen: Bombe / bleibt — food turns into a bomb, or just stays until eaten
+  Blast: + / X          — explosion spreads in a + or diagonal X shape
 
 Controls (game screen):
   R             — restart same veteran & level
@@ -123,7 +127,8 @@ def draw_grid(surface, game):
 
 
 def draw_panel(surface, font, big_font, food_eaten, turns, level, profile_name, file_name,
-               longevity, game_over, game_tps=DEFAULT_TPS):
+               longevity, game_over, game_tps=DEFAULT_TPS,
+               food_explodes=True, explosion_shape="plus"):
     px = FIELDSIZE * CELL_PX
     pygame.draw.rect(surface, (26, 26, 26), (px, 0, PANEL_W, WIN_H))
     pygame.draw.line(surface, BORDER, (px, 0), (px, WIN_H), 2)
@@ -145,6 +150,8 @@ def draw_panel(surface, font, big_font, food_eaten, turns, level, profile_name, 
     row(f"Level:    {level}")
     row(f"Profile:  {profile_name}")
     row(f"Longevity: {longevity} gens", color=DIM)
+    row(f"Essen: {'Bombe' if food_explodes else 'bleibt'}   Blast: {explosion_shape.upper()}",
+        color=DIM)
     sep()
     row(f"Food eaten:  {food_eaten:5d}")
     row(f"Turns:       {turns:5d}")
@@ -176,15 +183,21 @@ def draw_panel(surface, font, big_font, food_eaten, turns, level, profile_name, 
 # ── Selection screen ──────────────────────────────────────────────────────────
 
 def selection_screen(surface, font, big_font, clock):
-    """Returns (path, level) or None to quit."""
-    sel_file  = None
-    sel_level = 1
-    scroll    = 0
+    """Returns (path, level, food_explodes, explosion_shape) or None to quit."""
+    sel_file        = None
+    sel_level       = 1
+    food_explodes   = True      # False → Essen bleibt liegen (keine Bombe)
+    explosion_shape = "plus"    # "x"   → Explosion in X-Form
+    scroll          = 0
 
-    LIST_TOP    = 130
+    LIST_TOP    = 190
     ITEM_H      = 30
     LIST_BOTTOM = WIN_H - 70
     MAX_VIS     = (LIST_BOTTOM - LIST_TOP) // ITEM_H
+
+    # Toggle-Buttons für die Spieloptionen (analog zur Level-Auswahl)
+    food_btn  = pygame.Rect(90,  118, 150, 36)
+    blast_btn = pygame.Rect(250, 118, 150, 36)
 
     while True:
         files = list_veterans()
@@ -196,7 +209,7 @@ def selection_screen(surface, font, big_font, clock):
                 if event.key == pygame.K_q:
                     return None
                 elif event.key == pygame.K_RETURN and sel_file:
-                    return sel_file, sel_level
+                    return sel_file, sel_level, food_explodes, explosion_shape
                 elif event.key == pygame.K_UP:
                     scroll = max(0, scroll - 1)
                 elif event.key == pygame.K_DOWN:
@@ -212,6 +225,11 @@ def selection_screen(surface, font, big_font, clock):
                     bx = 90 + (lvl - 1) * 100
                     if bx <= mx <= bx + 80 and 72 <= my <= 108:
                         sel_level = lvl
+                # Option toggle buttons
+                if food_btn.collidepoint(mx, my):
+                    food_explodes = not food_explodes
+                if blast_btn.collidepoint(mx, my):
+                    explosion_shape = "x" if explosion_shape == "plus" else "plus"
                 # File list
                 for i in range(MAX_VIS):
                     idx = scroll + i
@@ -223,7 +241,7 @@ def selection_screen(surface, font, big_font, clock):
                 # Play button
                 play_r = pygame.Rect(WIN_W // 2 - 80, WIN_H - 56, 160, 42)
                 if play_r.collidepoint(mx, my) and sel_file:
-                    return sel_file, sel_level
+                    return sel_file, sel_level, food_explodes, explosion_shape
 
         # ── Draw ──────────────────────────────────────────────────────────
         surface.fill(BG)
@@ -239,6 +257,18 @@ def selection_screen(surface, font, big_font, clock):
             pygame.draw.rect(surface, BORDER, (bx, 72, 80, 36), 1, border_radius=6)
             lbl = font.render(f"Level {lvl}", True, FG)
             surface.blit(lbl, lbl.get_rect(center=(bx + 40, 90)))
+
+        # Option toggle buttons (highlighted when in the non-default mode)
+        surface.blit(font.render("Optionen:", True, FG), (20, 128))
+        for rect, active, text in (
+            (food_btn,  not food_explodes,        "Essen: bleibt" if not food_explodes else "Essen: Bombe"),
+            (blast_btn, explosion_shape == "x",   "Blast: X" if explosion_shape == "x" else "Blast: +"),
+        ):
+            col = HILITE if active else (45, 45, 45)
+            pygame.draw.rect(surface, col, rect, border_radius=6)
+            pygame.draw.rect(surface, BORDER, rect, 1, border_radius=6)
+            lbl = font.render(text, True, FG)
+            surface.blit(lbl, lbl.get_rect(center=rect.center))
 
         # List header
         surface.blit(font.render("Veterans  (newest first — click to select):", True, DIM), (20, LIST_TOP - 24))
@@ -298,7 +328,8 @@ def _do_tick(game, network, profile):
     return ate, died or game.game_over
 
 
-def run_game(surface, font, big_font, clock, veteran_path, level):
+def run_game(surface, font, big_font, clock, veteran_path, level,
+             food_explodes=True, explosion_shape="plus"):
     network, profile, profile_name = load_veteran(veteran_path)
     longevity  = getattr(network, "longevity", "?")
     file_name  = os.path.basename(veteran_path)
@@ -308,7 +339,8 @@ def run_game(surface, font, big_font, clock, veteran_path, level):
     restart = True
     while restart:
         restart    = False
-        game       = GameLogic(level)
+        game       = GameLogic(level, food_explodes=food_explodes,
+                               explosion_shape=explosion_shape)
         food_eaten = 0
         turns      = 0
         game_over  = False
@@ -367,7 +399,8 @@ def run_game(surface, font, big_font, clock, veteran_path, level):
             surface.fill(BG)
             draw_grid(surface, game)
             draw_panel(surface, font, big_font, food_eaten, turns, level,
-                       profile_name, file_name, longevity, game_over, game_tps)
+                       profile_name, file_name, longevity, game_over, game_tps,
+                       food_explodes, explosion_shape)
             pygame.display.flip()
             clock.tick(60)
 
@@ -388,8 +421,9 @@ def main():
         result = selection_screen(surface, font, big_font, clock)
         if result is None:
             break
-        path, level = result
-        action = run_game(surface, font, big_font, clock, path, level)
+        path, level, food_explodes, explosion_shape = result
+        action = run_game(surface, font, big_font, clock, path, level,
+                          food_explodes, explosion_shape)
         if action == "quit":
             break
 

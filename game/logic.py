@@ -2,6 +2,7 @@ import random
 from .constants import (
     FIELDSIZE, EXPLOSION_REACH, FOOD_STEPS, BOMB_STEPS, EXPLOSION_STEPS,
     Direction, FieldType, OPPOSITE, DIR_DELTA, START_X, START_Y,
+    EXPLOSION_SHAPES,
 )
 from .levels import LEVELS
 
@@ -9,8 +10,22 @@ from .levels import LEVELS
 class GameLogic:
     """Core game state and rules. No rendering — safe to run headless."""
 
-    def __init__(self, level: int = 1):
+    def __init__(
+        self,
+        level: int = 1,
+        food_explodes: bool = True,
+        explosion_shape: str = "plus",
+    ):
+        """
+        food_explodes:   True  → uneaten food turns into a bomb (original rule).
+                         False → food simply stays until eaten.
+        explosion_shape: "plus" → explosion spreads in a + shape.
+                         "x"    → explosion spreads diagonally in an X shape.
+        """
         self.level_id = level
+        # Gameplay-Optionen (kein Episoden-Zustand → werden von reset() nicht angefasst)
+        self.food_explodes = food_explodes
+        self.explosion_shape = explosion_shape
         self.reset()
 
     # ------------------------------------------------------------------
@@ -141,33 +156,18 @@ class GameLogic:
     # ------------------------------------------------------------------
 
     def _cross_field(self, cx: int, cy: int, field_type: FieldType) -> None:
-        """Kreuz-Muster um (cx, cy) setzen, stoppt an Wänden (mit Wrap-around).
+        """Explosions-Muster um (cx, cy) setzen, stoppt an Wänden (mit Wrap-around).
+        Form (+ oder X) hängt von self.explosion_shape ab.
         Walls block the blast arm but are not destroyed themselves."""
         self.grid[cy][cx] = field_type
 
-        for i in range(1, EXPLOSION_REACH + 1):
-            nx = (cx + i) % FIELDSIZE
-            if self.grid[cy][nx] == FieldType.WALL:
-                break
-            self.grid[cy][nx] = field_type
-
-        for i in range(1, EXPLOSION_REACH + 1):
-            nx = (cx - i) % FIELDSIZE
-            if self.grid[cy][nx] == FieldType.WALL:
-                break
-            self.grid[cy][nx] = field_type
-
-        for i in range(1, EXPLOSION_REACH + 1):
-            ny = (cy + i) % FIELDSIZE
-            if self.grid[ny][cx] == FieldType.WALL:
-                break
-            self.grid[ny][cx] = field_type
-
-        for i in range(1, EXPLOSION_REACH + 1):
-            ny = (cy - i) % FIELDSIZE
-            if self.grid[ny][cx] == FieldType.WALL:
-                break
-            self.grid[ny][cx] = field_type
+        for dx, dy in EXPLOSION_SHAPES[self.explosion_shape]:
+            for i in range(1, EXPLOSION_REACH + 1):
+                nx = (cx + dx * i) % FIELDSIZE
+                ny = (cy + dy * i) % FIELDSIZE
+                if self.grid[ny][nx] == FieldType.WALL:
+                    break
+                self.grid[ny][nx] = field_type
 
     def _apply_explosion(self) -> None:
         x, y = self.explosion_pos
@@ -191,6 +191,9 @@ class GameLogic:
             self._clear_explosion()
 
     def _tick_food(self) -> None:
+        # Essen-Explosion abgeschaltet → Essen bleibt liegen, keine Bombe.
+        if not self.food_explodes:
+            return
         self.food_timer += 1
         if self.food_timer >= FOOD_STEPS:
             self.bomb = True

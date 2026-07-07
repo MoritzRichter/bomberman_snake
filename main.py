@@ -9,8 +9,22 @@ MAX_STEPS = 2000
 
 
 def main() -> None:
-    cur_level = 1
-    game      = GameLogic(level=cur_level)
+    cur_level       = 1
+    food_explodes   = True      # E: Essen explodiert zur Bombe (aus → bleibt liegen)
+    explosion_shape = "plus"    # X: Explosionsform + / X
+
+    def make_game() -> GameLogic:
+        return GameLogic(
+            level=cur_level,
+            food_explodes=food_explodes,
+            explosion_shape=explosion_shape,
+        )
+
+    def print_settings() -> None:
+        print(f"  [Einstellung] Essen-Explosion: {'AN' if food_explodes else 'AUS'}"
+              f"   |   Explosionsform: {explosion_shape.upper()}")
+
+    game      = make_game()
     renderer  = Renderer()
     clock     = pygame.time.Clock()
     action    = Direction.RIGHT
@@ -19,8 +33,11 @@ def main() -> None:
     print("Bomberman Snake – Steuerung:")
     print("  Pfeiltasten : Richtung aendern")
     print("  1 / 2 / 3   : Level wechseln")
+    print("  E           : Essen-Explosion an/aus")
+    print("  X           : Explosionsform + / X")
     print("  R           : Neustart")
     print("  ESC / Q     : Beenden")
+    print_settings()
 
     running = True
     while running:
@@ -44,19 +61,27 @@ def main() -> None:
                     step = 0
                 elif event.key == pygame.K_1:
                     cur_level = 1
-                    game = GameLogic(level=cur_level)
+                    game = make_game()
                     action = Direction.RIGHT
                     step = 0
                 elif event.key == pygame.K_2:
                     cur_level = 2
-                    game = GameLogic(level=cur_level)
+                    game = make_game()
                     action = Direction.RIGHT
                     step = 0
                 elif event.key == pygame.K_3:
                     cur_level = 3
-                    game = GameLogic(level=cur_level)
+                    game = make_game()
                     action = Direction.RIGHT
                     step = 0
+                elif event.key == pygame.K_e:
+                    food_explodes = not food_explodes
+                    game.food_explodes = food_explodes
+                    print_settings()
+                elif event.key == pygame.K_x:
+                    explosion_shape = "x" if explosion_shape == "plus" else "plus"
+                    game.explosion_shape = explosion_shape
+                    print_settings()
 
         ate_food, died = game.step(int(action))
         step += 1

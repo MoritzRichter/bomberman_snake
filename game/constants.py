@@ -52,3 +52,10 @@ DIR_DELTA = {
     Direction.UP:    ( 0,  1),
     Direction.DOWN:  ( 0, -1),
 }
+
+# Directions an explosion's arms travel from its centre.
+# "plus" = classic + shape (orthogonal), "x" = diagonal X shape.
+EXPLOSION_SHAPES: dict[str, list[tuple[int, int]]] = {
+    "plus": [( 1,  0), (-1,  0), ( 0,  1), ( 0, -1)],
+    "x":    [( 1,  1), ( 1, -1), (-1,  1), (-1, -1)],
+}

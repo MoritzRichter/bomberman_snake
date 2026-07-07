@@ -10,6 +10,7 @@ Controls (selection screen):
 Options (buttons on the selection screen):
   Essen: Bombe / bleibt — food turns into a bomb, or just stays until eaten
   Blast: + / X          — explosion spreads in a + or diagonal X shape
+  Ansicht: voll / minimal — full main.py design, or simple flat rendering
 
 Controls (game screen):
   R             — restart same veteran & level
@@ -27,6 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'evolution'))
 
 from game.logic import GameLogic
 from game.constants import FieldType, Cell, FIELDSIZE
+from game.renderer import GridRenderer
 from network import activate_network
 from sensors import MoveHelper, TURN_LEFT, TURN_RIGHT
 from profiles import get_profile
@@ -188,6 +190,7 @@ def selection_screen(surface, font, big_font, clock):
     sel_level       = 1
     food_explodes   = True      # False → Essen bleibt liegen (keine Bombe)
     explosion_shape = "plus"    # "x"   → Explosion in X-Form
+    minimal_view    = False     # True  → einfache flache Darstellung
     scroll          = 0
 
     LIST_TOP    = 190
@@ -198,6 +201,7 @@ def selection_screen(surface, font, big_font, clock):
     # Toggle-Buttons für die Spieloptionen (analog zur Level-Auswahl)
     food_btn  = pygame.Rect(90,  118, 150, 36)
     blast_btn = pygame.Rect(250, 118, 150, 36)
+    view_btn  = pygame.Rect(410, 118, 150, 36)
 
     while True:
         files = list_veterans()
@@ -209,7 +213,7 @@ def selection_screen(surface, font, big_font, clock):
                 if event.key == pygame.K_q:
                     return None
                 elif event.key == pygame.K_RETURN and sel_file:
-                    return sel_file, sel_level, food_explodes, explosion_shape
+                    return sel_file, sel_level, food_explodes, explosion_shape, minimal_view
                 elif event.key == pygame.K_UP:
                     scroll = max(0, scroll - 1)
                 elif event.key == pygame.K_DOWN:
@@ -230,6 +234,8 @@ def selection_screen(surface, font, big_font, clock):
                     food_explodes = not food_explodes
                 if blast_btn.collidepoint(mx, my):
                     explosion_shape = "x" if explosion_shape == "plus" else "plus"
+                if view_btn.collidepoint(mx, my):
+                    minimal_view = not minimal_view
                 # File list
                 for i in range(MAX_VIS):
                     idx = scroll + i
@@ -241,7 +247,7 @@ def selection_screen(surface, font, big_font, clock):
                 # Play button
                 play_r = pygame.Rect(WIN_W // 2 - 80, WIN_H - 56, 160, 42)
                 if play_r.collidepoint(mx, my) and sel_file:
-                    return sel_file, sel_level, food_explodes, explosion_shape
+                    return sel_file, sel_level, food_explodes, explosion_shape, minimal_view
 
         # ── Draw ──────────────────────────────────────────────────────────
         surface.fill(BG)
@@ -263,6 +269,7 @@ def selection_screen(surface, font, big_font, clock):
         for rect, active, text in (
             (food_btn,  not food_explodes,        "Essen: bleibt" if not food_explodes else "Essen: Bombe"),
             (blast_btn, explosion_shape == "x",   "Blast: X" if explosion_shape == "x" else "Blast: +"),
+            (view_btn,  minimal_view,             "Ansicht: minimal" if minimal_view else "Ansicht: voll"),
         ):
             col = HILITE if active else (45, 45, 45)
             pygame.draw.rect(surface, col, rect, border_radius=6)
@@ -329,12 +336,13 @@ def _do_tick(game, network, profile):
 
 
 def run_game(surface, font, big_font, clock, veteran_path, level,
-             food_explodes=True, explosion_shape="plus"):
+             food_explodes=True, explosion_shape="plus", minimal_view=False):
     network, profile, profile_name = load_veteran(veteran_path)
     longevity  = getattr(network, "longevity", "?")
     file_name  = os.path.basename(veteran_path)
     speed_idx  = SPEED_STEPS.index(DEFAULT_TPS)
     game_tps   = SPEED_STEPS[speed_idx]
+    grid_rend  = GridRenderer(CELL_PX)   # Voll-Design, teilt Code mit main.py
 
     restart = True
     while restart:
@@ -397,7 +405,10 @@ def run_game(surface, font, big_font, clock, veteran_path, level,
 
             # ── Render ────────────────────────────────────────────────────
             surface.fill(BG)
-            draw_grid(surface, game)
+            if minimal_view:
+                draw_grid(surface, game)          # einfache flache Darstellung
+            else:
+                grid_rend.draw(surface, game)     # volles Design wie in main.py
             draw_panel(surface, font, big_font, food_eaten, turns, level,
                        profile_name, file_name, longevity, game_over, game_tps,
                        food_explodes, explosion_shape)
@@ -421,9 +432,9 @@ def main():
         result = selection_screen(surface, font, big_font, clock)
         if result is None:
             break
-        path, level, food_explodes, explosion_shape = result
+        path, level, food_explodes, explosion_shape, minimal_view = result
         action = run_game(surface, font, big_font, clock, path, level,
-                          food_explodes, explosion_shape)
+                          food_explodes, explosion_shape, minimal_view)
         if action == "quit":
             break
 

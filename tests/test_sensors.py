@@ -198,7 +198,7 @@ class TestIsBomb(unittest.TestCase):
 class TestGetInputs(unittest.TestCase):
 
     def test_no_profile_returns_seventeen_values(self):
-        """Without a profile, all 17 sensors are returned at weight 1.0."""
+        """Without a profile, all 19 sensors are returned at weight 1.0."""
         g = make_game()
         g.snake = [(5, 5), (4, 5), (3, 5)]
         g.direction = Direction.RIGHT
@@ -206,7 +206,7 @@ class TestGetInputs(unittest.TestCase):
         g.bomb = False
         g.bomb_pos = None
         h = MoveHelper(g)
-        self.assertEqual(len(h.get_inputs()), 17)
+        self.assertEqual(len(h.get_inputs()), 19)
 
     def test_profile_input_count_matches_enabled_sensors(self):
         """get_inputs() length must equal the number of enabled sensors in the profile."""
@@ -230,8 +230,8 @@ class TestGetInputs(unittest.TestCase):
     def test_profile_timer_has_fifteen_inputs(self):
         self.assertEqual(profile_input_size(get_profile("timer")), 15)
 
-    def test_profile_full_has_seventeen_inputs(self):
-        self.assertEqual(profile_input_size(get_profile("full")), 17)
+    def test_profile_full_has_nineteen_inputs(self):
+        self.assertEqual(profile_input_size(get_profile("full")), 19)
 
     def test_weighted_input_is_scaled(self):
         """A sensor with weight 2.0 should produce a value in [0.0, 2.0]."""

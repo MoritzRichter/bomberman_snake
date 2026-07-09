@@ -130,6 +130,16 @@ SCORING_PRESETS: dict[str, dict] = {
         "points_bomb_exploded"   : -5.0,
         "points_per_length_tick" :  0.02,  # × len(snake) pro Tick
     },
+
+    # In Game Score: Einzige Fittingfunktion ist der tatsächliche in game score
+    "in_game_score": {
+        "points_towards_food"    : 0,
+        "points_against_food"    : 0,
+        "points_ate_food"        : 1,
+        "points_survived_tick"   : 0,
+        "points_bomb_exploded"   : 0,
+        "points_per_length_tick" : 0,  # × len(snake) pro Tick
+    },
 }
 
 

@@ -112,6 +112,38 @@ def connectNodes(network: Network, from_node: Node, to_node: Node, weight):
 
 
 
+def clone_network(network: Network) -> Network:
+    """Iterative deep copy — avoids deepcopy recursion errors on large graphs.
+    Copies nodes first, then re-wires connections using an id-map.
+    """
+    new_net = Network(network.input_size, network.output_size)
+    new_net.score     = network.score
+    new_net.longevity = getattr(network, "longevity", 0)
+
+    node_map = {}
+    for old in network.nodes:
+        new = Node(old.type, old.bias, old.squash)
+        new.activation = old.activation
+        new.state      = old.state
+        new.index      = old.index
+        node_map[id(old)] = new
+        new_net.nodes.append(new)
+        if old.type == "input":
+            new_net.input_nodes.append(new)
+        elif old.type == "output":
+            new_net.output_nodes.append(new)
+
+    for old_conn in network.connections:
+        connectNodes(
+            new_net,
+            node_map[id(old_conn.from_node)],
+            node_map[id(old_conn.to_node)],
+            old_conn.weight,
+        )
+
+    return new_net
+
+
 def reindex_network(network: Network) :
     for i, node in enumerate(network.nodes) :
         node.index = i

@@ -6,6 +6,30 @@ from game.logic import GameLogic
 from game.constants import Direction, FieldType, FIELDSIZE, DIR_DELTA, FOOD_STEPS, BOMB_STEPS
 
 # -------------------------------------------------------
+# Raw-input constants
+# -------------------------------------------------------
+
+# Normalized cell values for the raw grid encoding
+_RAW_CELL_FREE     = 0.0
+_RAW_CELL_WALL     = 1 / 6
+_RAW_CELL_EXPLODED = 2 / 6
+_RAW_CELL_FOOD     = 3 / 6
+_RAW_CELL_BOMB     = 4 / 6
+_RAW_CELL_BODY     = 5 / 6
+_RAW_CELL_HEAD     = 1.0
+
+_DIR_ONEHOT = {
+    Direction.RIGHT : [1.0, 0.0, 0.0, 0.0],
+    Direction.UP    : [0.0, 1.0, 0.0, 0.0],
+    Direction.LEFT  : [0.0, 0.0, 1.0, 0.0],
+    Direction.DOWN  : [0.0, 0.0, 0.0, 1.0],
+}
+
+# 100 grid cells + 4 direction one-hot + food_timer + bomb_timer + explosion + snake_length
+RAW_INPUT_SIZE = FIELDSIZE * FIELDSIZE + 4 + 4
+
+
+# -------------------------------------------------------
 # Lookup tables: current direction → absolute direction after a relative turn
 # -------------------------------------------------------
 
@@ -31,9 +55,10 @@ TURN_RIGHT = {
 class MoveHelper :
     """Computes relative sensor inputs for the neural network from the current game state."""
 
-    FORWARD = "forward"
-    LEFT    = "left"
-    RIGHT   = "right"
+    FORWARD  = "forward"
+    LEFT     = "left"
+    RIGHT    = "right"
+    BACKWARD = "backward"
 
     def __init__(self, game: GameLogic, profile: dict = None) :
         self.game    = game
@@ -68,25 +93,70 @@ class MoveHelper :
         """True if food lies anywhere in this relative direction (not just the adjacent cell)."""
         head = self.game.snake[0]
 
-        if direction == self.FORWARD :
-            return self._is_food_forward(head)
-        if direction == self.LEFT :
-            return self._is_food_left(head)
-        if direction == self.RIGHT :
-            return self._is_food_right(head)
+        if direction == self.FORWARD  : return self._is_food_forward(head)
+        if direction == self.LEFT     : return self._is_food_left(head)
+        if direction == self.RIGHT    : return self._is_food_right(head)
+        if direction == self.BACKWARD : return self._is_food_backward(head)
 
     def get_inputs(self) -> list :
         """Return the input vector for the network, filtered and weighted by the active profile."""
         if self.profile is None :
             return [v * 1.0 for v in self._all_raw_values()]
+        if "_raw" in self.profile :
+            return self.get_raw_inputs()
         return [
             SENSOR_FUNCS[name](self) * weight
             for name, weight in self.profile.items()
             if weight > 0
         ]
 
+    def get_raw_inputs(self) -> list :
+        """Return the full game state as a flat normalized vector (RAW_INPUT_SIZE values).
+
+        Layout:
+          [0..99]   10×10 grid, row-major (y=0..9, x=0..9), normalized cell values
+          [100..103] direction one-hot: RIGHT / UP / LEFT / DOWN
+          [104]     food_timer  / FOOD_STEPS
+          [105]     bomb_timer  / BOMB_STEPS  (0 if no bomb)
+          [106]     explosion_active  (0 or 1)
+          [107]     snake_length / (FIELDSIZE²)
+        """
+        game     = self.game
+        head     = game.snake[0] if game.snake else (-1, -1)
+        body_set = set((x, y) for x, y in game.snake[1:])
+        fx, fy   = game.food_pos
+        bx, by   = game.bomb_pos if (game.bomb and game.bomb_pos) else (None, None)
+
+        inputs = []
+        for y in range(FIELDSIZE) :
+            for x in range(FIELDSIZE) :
+                ft = game.grid[y][x]
+                if ft == FieldType.WALL :
+                    val = _RAW_CELL_WALL
+                elif ft == FieldType.EXPLODED :
+                    val = _RAW_CELL_EXPLODED
+                elif (x, y) == head :
+                    val = _RAW_CELL_HEAD
+                elif (x, y) in body_set :
+                    val = _RAW_CELL_BODY
+                elif x == fx and y == fy :
+                    val = _RAW_CELL_FOOD
+                elif bx is not None and x == bx and y == by :
+                    val = _RAW_CELL_BOMB
+                else :
+                    val = _RAW_CELL_FREE
+                inputs.append(val)
+
+        inputs.extend(_DIR_ONEHOT[game.direction])
+        inputs.append(game.food_timer / FOOD_STEPS)
+        inputs.append((game.bomb_timer / BOMB_STEPS) if game.bomb else 0.0)
+        inputs.append(1.0 if game.explosion else 0.0)
+        inputs.append(len(game.snake) / (FIELDSIZE * FIELDSIZE))
+
+        return inputs
+
     def _all_raw_values(self) -> list :
-        """All 14 sensor values at weight 1.0 (used when no profile is set)."""
+        """All 19 sensor values at weight 1.0 (used when no profile is set)."""
         return [func(self) for func in SENSOR_FUNCS.values()]
 
     def food_timer_normalized(self) -> float :
@@ -121,12 +191,10 @@ class MoveHelper :
 
         head = self.game.snake[0]
 
-        if direction == self.FORWARD :
-            return self._is_bomb_forward(head)
-        if direction == self.LEFT :
-            return self._is_bomb_left(head)
-        if direction == self.RIGHT :
-            return self._is_bomb_right(head)
+        if direction == self.FORWARD  : return self._is_bomb_forward(head)
+        if direction == self.LEFT     : return self._is_bomb_left(head)
+        if direction == self.RIGHT    : return self._is_bomb_right(head)
+        if direction == self.BACKWARD : return self._is_bomb_backward(head)
 
     def body_proximity(self, direction: str) -> float :
         """0.0–1.0: proximity of the nearest body segment along a ray in this relative direction.
@@ -183,6 +251,16 @@ class MoveHelper :
         else                      : dist = fx - hx if fx > hx else 0
         return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
 
+    def _is_food_backward(self, head: tuple) -> float :
+        hx, hy = head
+        fx, fy = self.game.food_pos
+        d = self.game.direction
+        if   d == Direction.RIGHT : dist = hx - fx if fx < hx else 0
+        elif d == Direction.LEFT  : dist = fx - hx if fx > hx else 0
+        elif d == Direction.UP    : dist = hy - fy if fy < hy else 0
+        else                      : dist = fy - hy if fy > hy else 0
+        return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
+
 
     # --- Bomb direction checks: continuous proximity (same scheme as food) ---
 
@@ -216,6 +294,16 @@ class MoveHelper :
         else                      : dist = bx - hx if bx > hx else 0
         return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
 
+    def _is_bomb_backward(self, head: tuple) -> float :
+        hx, hy = head
+        bx, by = self.game.bomb_pos
+        d = self.game.direction
+        if   d == Direction.RIGHT : dist = hx - bx if bx < hx else 0
+        elif d == Direction.LEFT  : dist = bx - hx if bx > hx else 0
+        elif d == Direction.UP    : dist = hy - by if by < hy else 0
+        else                      : dist = by - hy if by > hy else 0
+        return (1.0 - dist / FIELDSIZE) if dist > 0 else 0.0
+
 
     # --- Shared helpers ----------------------------------------------------
 
@@ -234,9 +322,11 @@ SENSOR_FUNCS: dict = {
     "is_food_forward"  : lambda h: h.is_food(h.FORWARD),
     "is_food_left"     : lambda h: h.is_food(h.LEFT),
     "is_food_right"    : lambda h: h.is_food(h.RIGHT),
+    "is_food_backward" : lambda h: h.is_food(h.BACKWARD),
     "is_bomb_forward"  : lambda h: h.is_bomb(h.FORWARD),
     "is_bomb_left"     : lambda h: h.is_bomb(h.LEFT),
     "is_bomb_right"    : lambda h: h.is_bomb(h.RIGHT),
+    "is_bomb_backward" : lambda h: h.is_bomb(h.BACKWARD),
     "food_timer"       : lambda h: h.food_timer_normalized(),
     "bomb_timer"       : lambda h: h.bomb_timer_normalized(),
     "explosion_active" : lambda h: h.explosion_active(),

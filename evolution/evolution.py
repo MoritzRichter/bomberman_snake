@@ -1,10 +1,9 @@
 import random
 import math
-import copy
 from network import (
     Network, Node, build_node, buildNetwork,
     connectNodes, disconnect_nodes, has_connection,
-    remove_node_from_network, reindex_network,
+    remove_node_from_network, reindex_network, clone_network,
 )
 from constants import config, ALL_ACTIVATIONS
 
@@ -20,6 +19,7 @@ class MutationType(Enum):
     MOD_BIAS = auto()
     MOD_ACTIVATION = auto()
     SWAP_NODES = auto()
+    ADD_LAYER = auto()
 
 #Changes activation function to a random different one
 def mutateNodeActivationFunction(node: Node):
@@ -193,6 +193,46 @@ def mutateBias(network: Network) :
     return network
 
 
+# Inserts a full hidden layer just before the output nodes.
+# All connections that previously led into output nodes are removed and
+# replaced by: (former sources) → (new layer) → (output nodes).
+# Layer size is random in [2, max(2, input_size // 2)].
+def mutateAddLayer(network: Network) -> Network:
+    output_connections = [conn for conn in network.connections if conn.to_node.type == "output"]
+
+    if not output_connections:
+        return network
+
+    layer_size = random.randint(2, max(2, network.input_size // 2))
+
+    # Collect unique source nodes (preserve order via dict)
+    source_nodes = list({id(conn.from_node): conn.from_node for conn in output_connections}.values())
+
+    for conn in output_connections[:]:
+        disconnect_nodes(network, conn.from_node, conn.to_node)
+
+    insert_pos = len(network.nodes) - network.output_size
+    new_nodes = []
+    for i in range(layer_size):
+        node = build_node("hidden")
+        mutateNodeActivationFunction(node)
+        network.nodes.insert(insert_pos + i, node)
+        new_nodes.append(node)
+
+    scale_in  = math.sqrt(2 / max(len(source_nodes), 1))
+    scale_out = math.sqrt(2 / layer_size)
+
+    for src in source_nodes:
+        for new_node in new_nodes:
+            connectNodes(network, src, new_node, random.uniform(-1, 1) * scale_in)
+
+    for new_node in new_nodes:
+        for out_node in network.output_nodes:
+            connectNodes(network, new_node, out_node, random.uniform(-1, 1) * scale_out)
+
+    return network
+
+
 #Swaps bias and activation of 2 random hidden/output nodes
 def mutateSwapNodes(network: Network) :
     mutateOutput = config.mutations.swapNodes.mutateOutput
@@ -232,6 +272,7 @@ mutation = {
     MutationType.MOD_BIAS        : mutateBias,
     MutationType.MOD_ACTIVATION  : mutateActivationFunction,
     MutationType.SWAP_NODES      : mutateSwapNodes,
+    MutationType.ADD_LAYER       : mutateAddLayer,
 }
 
 ALL_MUTATIONS = list(mutation.keys())
@@ -251,6 +292,7 @@ MUTATION_WEIGHTS = {
     MutationType.MOD_BIAS        : 3,
     MutationType.MOD_ACTIVATION  : 2,
     MutationType.SWAP_NODES      : 3,
+    MutationType.ADD_LAYER       : 1,
 }
 
 
@@ -275,7 +317,7 @@ def performMutation(genome: Network, mutation_amount=None, possible_mutations=No
     possible_mutations = possible_mutations if possible_mutations is not None else ALL_MUTATIONS
 
     # Deep copy so the original (e.g. an elitist) is never modified in place
-    target = copy.deepcopy(genome)
+    target = clone_network(genome)
 
     for _ in range(mutation_amount) :
         method = selectMutationMethod(possible_mutations)

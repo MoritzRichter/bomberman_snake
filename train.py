@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'evolution'))
 from game.constants import FieldType, Cell, FIELDSIZE
 from network import buildNetwork
 from evolution import sortPopulation, getOffspring, mutatePopulation, createPopulation
-from constants import config
+from constants import config, apply_scoring_preset
 from agent import Agent
 from profiles import get_profile, profile_input_size
 
@@ -21,9 +21,10 @@ from profiles import get_profile, profile_input_size
 
 GAMES_COUNT         = 50
 GENERATIONS         = 600
-LEVEL               = 3
+LEVEL               = 1
 RENDER_FPS          = 60       # display refresh rate; game logic runs uncapped
-PROFILE_NAME        = "full"   # "basic" | "bomb_aware" | "timer" | "full"
+PROFILE_NAME        = "raw"   # "basic" | "bomb_aware" | "timer" | "full" | "raw"
+SCORING_MODE        = "balanced"  # "balanced" | "survival" | "food" | "length" | "in_game_score"
 SELECTION_STRATEGY  = "power"  # "power" | "tournament" | "roulette" | "top_n" | "random"
 ELITISM_RATE        = 0.2      # fraction of population that survives unchanged (0.0–0.5)
 _HERE        = os.path.dirname(os.path.abspath(__file__))
@@ -341,6 +342,8 @@ def main():
     clock    = pygame.time.Clock()
     font     = pygame.font.SysFont(None, 16)
     big_font = pygame.font.SysFont(None, 24)
+
+    apply_scoring_preset(SCORING_MODE)
 
     profile  = get_profile(PROFILE_NAME)
     n_inputs = profile_input_size(profile)

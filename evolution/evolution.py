@@ -38,7 +38,7 @@ def mutateAddNode(network: Network) :
     if len(network.connections) == 0 :
         if config.warnings :
             print("No connections to mutate", network)
-        return
+        return network
 
     connection = network.connections[random.randint(0, len(network.connections) - 1)]
 

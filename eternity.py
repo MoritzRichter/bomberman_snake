@@ -45,7 +45,8 @@ from profiles import get_profile, profile_input_size
 GAMES_COUNT          = 50
 GENERATIONS_PER_RUN  = 300
 LEVEL                = 1
-PROFILE_NAME         = "full"
+PROFILE_NAME         = "raw"
+
 SELECTION_STRATEGY   = "power"      # "power" or "tournament"
 SELECTION_POWER      = 4            # bias exponent for power strategy (higher = stronger top-bias)
 TOURNAMENT_K         = 5            # candidates drawn per tournament (higher = more selective)

@@ -72,7 +72,7 @@ N_WORKERS = None
 
 # Temp-Elite system: high-performing offspring get protected slots for a few generations
 MAX_TEMP_ELITE     = ELITISM_RATE * 0.5     # max extra (non-permanent) slots
-TEMP_PROMOTE_AFTER = 3     # how many consecutive good runs before promotion to permanent elite
+TEMP_PROMOTE_AFTER = 2     # how many consecutive good runs before promotion to permanent elite
 
 # Set True to print Temp-Elite promotions and other internal events
 VERBOSE = False

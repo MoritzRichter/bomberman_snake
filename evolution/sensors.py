@@ -322,11 +322,9 @@ SENSOR_FUNCS: dict = {
     "is_food_forward"  : lambda h: h.is_food(h.FORWARD),
     "is_food_left"     : lambda h: h.is_food(h.LEFT),
     "is_food_right"    : lambda h: h.is_food(h.RIGHT),
-    "is_food_backward" : lambda h: h.is_food(h.BACKWARD),
     "is_bomb_forward"  : lambda h: h.is_bomb(h.FORWARD),
     "is_bomb_left"     : lambda h: h.is_bomb(h.LEFT),
     "is_bomb_right"    : lambda h: h.is_bomb(h.RIGHT),
-    "is_bomb_backward" : lambda h: h.is_bomb(h.BACKWARD),
     "food_timer"       : lambda h: h.food_timer_normalized(),
     "bomb_timer"       : lambda h: h.bomb_timer_normalized(),
     "explosion_active" : lambda h: h.explosion_active(),
@@ -335,5 +333,7 @@ SENSOR_FUNCS: dict = {
     "body_forward"     : lambda h: h.body_proximity(h.FORWARD),
     "body_left"        : lambda h: h.body_proximity(h.LEFT),
     "body_right"       : lambda h: h.body_proximity(h.RIGHT),
+    "is_food_backward" : lambda h: h.is_food(h.BACKWARD),
+    "is_bomb_backward" : lambda h: h.is_bomb(h.BACKWARD),
 }
 

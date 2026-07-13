@@ -93,11 +93,11 @@ SCORING_PRESETS: dict[str, dict] = {
 
     # Standard-Modus: ausgewogenes Verhältnis aller Score-Komponenten
     "balanced": {
-        "points_towards_food"    :  1.0,
-        "points_against_food"    : -0.5,
+        "points_towards_food"    :  0.5,
+        "points_against_food"    : -0.2,
         "points_ate_food"        :  5.0,
         "points_survived_tick"   :  0.03,
-        "points_bomb_exploded"   : -1.0,
+        "points_bomb_exploded"   : -0.5,
         "points_per_length_tick" :  0.0,
     },
 

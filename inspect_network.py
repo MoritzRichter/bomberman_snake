@@ -532,7 +532,7 @@ def find_veterans() -> list:
     found = []
     for root, _, files in os.walk(_HERE):
         for f in files:
-            if f.startswith("veteran_") and f.endswith(".pkl"):
+            if f.startswith("veteran") and f.endswith(".pkl"):
                 found.append(os.path.join(root, f))
     return sorted(found, key=os.path.getmtime, reverse=True)
 

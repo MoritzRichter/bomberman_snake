@@ -4,16 +4,99 @@ plot_csv.py — Plot a training report CSV as graphs.
 Usage:
     python plot_csv.py                        # opens file picker dialog
     python plot_csv.py training_report.csv    # direct path as argument
+    python plot_csv.py -s                     # simple view (smoothed key metrics only)
+    python plot_csv.py training_report.csv -s
+
+Settings (edit below):
+    SIMPLE_VIEW   = False   flip to True to always open in simplified mode
+    SMOOTH_WINDOW = 0       rolling-average window (0 = auto: len/20, min 5)
 """
 import sys
 import os
 import csv
 import glob
 
+# ── Settings ──────────────────────────────────────────────────────────────────
+SIMPLE_VIEW   = False   # True = only smoothed key metrics, no raw data
+SMOOTH_WINDOW = 0       # rolling-average window size; 0 = auto
+
 
 def load_csv(path: str) -> list[dict]:
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def _smooth(values, window: int):
+    """Rolling average over `values`. window=0 picks len/20, min 5."""
+    import numpy as np
+    arr = np.array(values, dtype=float)
+    k   = window if window > 0 else max(5, len(arr) // 20)
+    k   = min(k, len(arr))
+    kernel = np.ones(k) / k
+    padded = np.pad(arr, (k // 2, k - k // 2 - 1), mode="edge")
+    return np.convolve(padded, kernel, mode="valid")
+
+
+def plot_simple(rows: list[dict], path: str):
+    """Simplified view: only the smoothed key metrics, no raw data visible."""
+    import matplotlib.pyplot as plt
+
+    def col(key, default=0.0):
+        return [float(r.get(key) or default) for r in rows]
+
+    gens          = [int(float(r.get("generation") or 0)) for r in rows]
+    best_scores   = col("best_score")
+    median_scores = col("median_score")
+    has_elite     = "elite_median_score" in rows[0]
+    elite_medians = col("elite_median_score") if has_elite else []
+    best_turns    = col("best_turns")
+    median_turns  = col("median_turns")
+    has_food      = "best_food_eaten" in rows[0]
+    food_eaten    = col("best_food_eaten") if has_food else []
+
+    plt.style.use("dark_background")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle(
+        f"Bomberman Snake — {os.path.basename(path)}  [Simplified]",
+        fontsize=12, fontweight="bold",
+    )
+
+    # ── Score ─────────────────────────────────────────────────────────────
+    ax1.plot(gens, _smooth(best_scores,   SMOOTH_WINDOW), color="#00e676", linewidth=2.2, label="Best score")
+    ax1.plot(gens, _smooth(median_scores, SMOOTH_WINDOW), color="#ffd740", linewidth=2.2, label="Median score")
+    if has_elite:
+        ax1.plot(gens, _smooth(elite_medians, SMOOTH_WINDOW),
+                 color="#b39ddb", linewidth=1.6, linestyle="--", label="Elite median")
+    ax1.axhline(0, color="white", linewidth=0.4, alpha=0.35)
+    ax1.set_title("Score", fontsize=11)
+    ax1.set_xlabel("Generation")
+    ax1.set_ylabel("Score")
+    ax1.legend(fontsize=9)
+    ax1.grid(True, alpha=0.15)
+
+    # ── Turns (+ food on twin axis) ────────────────────────────────────────
+    ax2.plot(gens, _smooth(best_turns,   SMOOTH_WINDOW), color="#00e676", linewidth=2.2, label="Best turns")
+    ax2.plot(gens, _smooth(median_turns, SMOOTH_WINDOW), color="#ffd740", linewidth=2.2, label="Median turns")
+    if has_food and any(v > 0 for v in food_eaten):
+        ax2r = ax2.twinx()
+        ax2r.plot(gens, _smooth(food_eaten, SMOOTH_WINDOW),
+                  color="#ff9800", linewidth=1.6, linestyle=":", label="Food (best)")
+        ax2r.set_ylabel("Food eaten", color="#ff9800", fontsize=9)
+        ax2r.tick_params(axis="y", labelcolor="#ff9800")
+        ax2r.legend(loc="upper right", fontsize=9)
+    ax2.set_title("Turns survived", fontsize=11)
+    ax2.set_xlabel("Generation")
+    ax2.set_ylabel("Turns")
+    ax2.legend(loc="upper left", fontsize=9)
+    ax2.grid(True, alpha=0.15)
+
+    plt.tight_layout()
+    try:
+        plt.show()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        plt.close("all")
 
 
 def plot(path: str):
@@ -165,8 +248,16 @@ def pick_file_terminal() -> str | None:
 
 
 def main():
-    if len(sys.argv) > 1:
-        path = sys.argv[1]
+    args   = sys.argv[1:]
+    simple = SIMPLE_VIEW
+
+    # Extract flags
+    if "--simple" in args or "-s" in args:
+        simple = True
+        args   = [a for a in args if a not in ("--simple", "-s")]
+
+    if args:
+        path = args[0]
         if not os.path.isfile(path):
             print(f"File not found: {path}")
             sys.exit(1)
@@ -174,8 +265,15 @@ def main():
         path = pick_file_dialog() or pick_file_terminal()
 
     if path:
-        print(f"Plotting: {path}")
-        plot(path)
+        print(f"Plotting: {path}  [{'simple' if simple else 'full'}]")
+        rows = load_csv(path)
+        if not rows:
+            print("CSV is empty.")
+            return
+        if simple:
+            plot_simple(rows, path)
+        else:
+            plot(path)
 
 
 if __name__ == "__main__":

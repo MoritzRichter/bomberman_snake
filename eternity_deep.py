@@ -64,14 +64,14 @@ TOURNAMENT_K         = 5            # candidates drawn per tournament (higher = 
 SCORING_MODE         = "balanced"   # "balanced" | "survival" | "food" | "length"
 ELITISM_RATE         = 0.2
 
-BOOTSTRAP_THRESHOLD  = 1000.0   # bootstrap passes when best_score > this in last WINDOW gens
+BOOTSTRAP_THRESHOLD  = 800.0   # bootstrap passes when best_score > this in last WINDOW gens
 IMPROVEMENT_FACTOR   = 1.05     # each evolution run must raise median by this factor
 WINDOW               = 5        # tail window (number of gens) for evaluating a run
-MAX_FAILURES         = 5        # consecutive failures before saving and restarting
+MAX_FAILURES         = 15        # consecutive failures before saving and restarting
 
 # Multi-game evaluation: each brain plays EVAL_GAMES games; score is the average.
 # Reduces luck-based variance in fitness (lucky/unlucky food placement, bomb timing).
-EVAL_GAMES = 3
+EVAL_GAMES = 2
 
 # Level rotation: when True each brain plays one game on each of levels 1, 2, 3
 # (overrides LEVEL and sets EVAL_GAMES implicitly to 3).
@@ -92,7 +92,7 @@ VERBOSE = False
 # After SWITCH_TO_EXPLOIT_AFTER consecutive evo failures, switch from structural
 # exploration to weight/bias refinement. Reverts to EXPLORE on any improvement.
 
-SWITCH_TO_EXPLOIT_AFTER = 3   # consecutive failures before switching to EXPLOIT mode
+SWITCH_TO_EXPLOIT_AFTER = 6   # consecutive failures before switching to EXPLOIT mode
 
 # EXPLORE: push for deeper networks — high structural mutation probability
 WEIGHTS_EXPLORE = {

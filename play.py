@@ -35,13 +35,16 @@ from profiles import get_profile
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-SPEED_STEPS  = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
-DEFAULT_TPS  = 5
-CELL_PX      = 60
-PANEL_W      = 230
-WIN_W        = FIELDSIZE * CELL_PX + PANEL_W
-WIN_H        = FIELDSIZE * CELL_PX
-VETERANS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "veterans")
+SPEED_STEPS   = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+DEFAULT_TPS   = 5
+CELL_PX       = 60
+PANEL_W       = 230
+WIN_W         = FIELDSIZE * CELL_PX + PANEL_W
+WIN_H         = FIELDSIZE * CELL_PX
+_HERE         = os.path.dirname(os.path.abspath(__file__))
+VETERANS_DIR  = os.path.join(_HERE, "veterans")
+ETERNITY_RUN  = os.path.join(_HERE, "Eternity-Run")
+ETERNITY_DEEP = os.path.join(_HERE, "Eternity-Deep")
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 
@@ -82,12 +85,34 @@ def load_veteran(path: str):
 
 
 def list_veterans() -> list[str]:
-    """All .pkl files in veterans/, sorted newest first."""
-    return sorted(
-        glob.glob(os.path.join(VETERANS_DIR, "*.pkl")),
-        key=os.path.getmtime,
-        reverse=True,
-    )
+    """All veteran .pkl files from veterans/, Eternity-Run/, and Eternity-Deep/, newest first."""
+    paths = glob.glob(os.path.join(VETERANS_DIR, "*.pkl"))
+    paths += glob.glob(os.path.join(ETERNITY_RUN,  "**", "veteran*.pkl"), recursive=True)
+    paths += glob.glob(os.path.join(ETERNITY_DEEP, "**", "veteran*.pkl"), recursive=True)
+    seen, unique = set(), []
+    for p in paths:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return sorted(unique, key=os.path.getmtime, reverse=True)
+
+
+def veteran_label(path: str) -> str:
+    """Short display label: [source/run] filename."""
+    rel   = os.path.relpath(path, _HERE).replace("\\", "/")
+    parts = rel.split("/")
+    src   = parts[0]
+    fname = parts[-1]
+    if src == "veterans":
+        return f"[Vet]  {fname}"
+    # Eternity-Run or Eternity-Deep: parts = [src, subfolder, veteran.pkl]
+    tag_map = {"Eternity-Run": "Run", "Eternity-Deep": "Deep"}
+    short   = tag_map.get(src, src)
+    if len(parts) >= 3:
+        folder = parts[1]
+        run_tag = folder.split("_")[-1] if "_run" in folder else ("ckpt" if folder == "checkpoint" else folder[:8])
+        return f"[{short}/{run_tag}]  {fname}"
+    return f"[{short}]  {fname}"
 
 # ── Grid rendering ────────────────────────────────────────────────────────────
 
@@ -281,8 +306,9 @@ def selection_screen(surface, font, big_font, clock):
         surface.blit(font.render("Veterans  (newest first — click to select):", True, DIM), (20, LIST_TOP - 24))
 
         if not files:
-            msg = f"No .pkl files found in  {VETERANS_DIR}/"
-            surface.blit(font.render(msg, True, (160, 70, 70)), (20, LIST_TOP + 10))
+            surface.blit(font.render("No veteran*.pkl files found in:", True, (160, 70, 70)), (20, LIST_TOP + 10))
+            for i, d in enumerate((VETERANS_DIR, ETERNITY_RUN, ETERNITY_DEEP)):
+                surface.blit(font.render(f"  {d}", True, DIM), (20, LIST_TOP + 32 + i * 20))
         else:
             for i in range(MAX_VIS):
                 idx = scroll + i
@@ -290,7 +316,7 @@ def selection_screen(surface, font, big_font, clock):
                     break
                 fy   = LIST_TOP + i * ITEM_H
                 path = files[idx]
-                name = os.path.basename(path)
+                name = veteran_label(path)
                 is_s = path == sel_file
                 if is_s:
                     pygame.draw.rect(surface, HILITE, (10, fy, WIN_W - 20, ITEM_H - 2), border_radius=4)
@@ -339,7 +365,7 @@ def run_game(surface, font, big_font, clock, veteran_path, level,
              food_explodes=True, explosion_shape="plus", minimal_view=False):
     network, profile, profile_name = load_veteran(veteran_path)
     longevity  = getattr(network, "longevity", "?")
-    file_name  = os.path.basename(veteran_path)
+    file_name  = veteran_label(veteran_path)
     speed_idx  = SPEED_STEPS.index(DEFAULT_TPS)
     game_tps   = SPEED_STEPS[speed_idx]
     grid_rend  = GridRenderer(CELL_PX)   # Voll-Design, teilt Code mit main.py

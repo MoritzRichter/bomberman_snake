@@ -209,7 +209,7 @@ def _conn_color(weight: float, max_w: float) -> tuple:
 
 
 def draw_network(surface, font_sm, network, pos, cam_x, cam_y, zoom,
-                 sel_node, sel_conn, threshold, show_labels):
+                 sel_node, sel_conn, threshold, show_labels, in_lbls=None):
 
     max_w = max((abs(c.weight) for c in network.connections), default=1.0)
 
@@ -247,7 +247,9 @@ def draw_network(surface, font_sm, network, pos, cam_x, cam_y, zoom,
     surface.blit(conn_surf, (0, 0))
 
     # ── Nodes ─────────────────────────────────────────────────────────────────
-    node_idx = {id(n): i for i, n in enumerate(network.nodes)}
+    node_idx      = {id(n): i  for i, n in enumerate(network.nodes)}
+    input_node_i  = {id(n): i  for i, n in enumerate(network.input_nodes)}
+    labels        = in_lbls or []
 
     for n in network.nodes:
         if id(n) not in pos:
@@ -278,6 +280,15 @@ def draw_network(surface, font_sm, network, pos, cam_x, cam_y, zoom,
         if show_idx:
             idx_lbl = font_sm.render(str(idx), True, color)
             surface.blit(idx_lbl, (sx - idx_lbl.get_width() // 2, sy + r + 2))
+
+        # Sensor name to the LEFT of input nodes
+        if n.type == "input" and zoom > 0.28 and labels:
+            i_in = input_node_i.get(id(n), -1)
+            if 0 <= i_in < len(labels):
+                lbl_txt = labels[i_in]
+                lbl_img = font_sm.render(lbl_txt, True, C_IN)
+                surface.blit(lbl_img, (sx - r - lbl_img.get_width() - 6,
+                                       sy - lbl_img.get_height() // 2))
 
 
 def draw_sidebar(surface, fonts, network, sel_node, sel_conn,
@@ -519,7 +530,7 @@ def run_viewer(window, network: Network, profile_name: str, path: str):
 
         window.fill(BG)
         draw_network(window, font_sm, network, pos, cam_x, cam_y, zoom,
-                     sel_node, sel_conn, threshold, show_labels)
+                     sel_node, sel_conn, threshold, show_labels, in_lbls)
         draw_sidebar(window, fonts, network, sel_node, sel_conn,
                      profile_name, in_lbls, threshold, show_labels)
         pygame.display.flip()

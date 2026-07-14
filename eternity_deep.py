@@ -539,16 +539,9 @@ def _append_progress(results: list, gen_offset: int) -> None:
             writer.writerow(shifted)
 
 
-def show_eternity_graphs(progress_path: str = None):
-    """Plot cumulative training progress from the progress CSV (same 4-panel layout as train.py).
-    Dashed vertical lines mark each successful phase boundary (every GENERATIONS_PER_RUN gens).
-    """
+def _plot_progress_worker(path: str):
+    """Runs in a separate process — reads CSV and blocks on plt.show() there, not in the trainer."""
     import matplotlib.pyplot as plt
-
-    path = progress_path or _PROGRESS_PATH
-    if not os.path.isfile(path):
-        print("  No progress data to plot yet.")
-        return
 
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
@@ -556,7 +549,6 @@ def show_eternity_graphs(progress_path: str = None):
             rows.append(row)
 
     if not rows:
-        print("  Progress CSV is empty.")
         return
 
     def _f(key):
@@ -589,10 +581,9 @@ def show_eternity_graphs(progress_path: str = None):
 
     plt.style.use("dark_background")
     fig, axes = plt.subplots(2, 2, figsize=(15, 9))
-    fig.suptitle("Bomberman Snake — Eternity Progress (cumulative)", fontsize=13, fontweight="bold")
+    fig.suptitle("Bomberman Snake — Eternity Deep Progress (cumulative)", fontsize=13, fontweight="bold")
     ax1, ax2, ax3, ax4 = axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]
 
-    # ── Score overview ────────────────────────────────────────────────────
     ax1.plot(gens, best_scores,   color="#00e676", linewidth=1.5, label="Best")
     ax1.plot(gens, median_scores, color="#ffd740", linewidth=1.5, label="Median")
     ax1.plot(gens, elite_medians, color="#b39ddb", linewidth=1.0, linestyle="--", label="Elite median", alpha=0.8)
@@ -605,7 +596,6 @@ def show_eternity_graphs(progress_path: str = None):
     ax1.legend(loc="upper left", fontsize=8)
     ax1.grid(True, alpha=0.2)
 
-    # ── Turns + food ──────────────────────────────────────────────────────
     ax2.plot(gens, best_turns,   color="#00e676", linewidth=1.5, label="Best turns")
     ax2.plot(gens, median_turns, color="#ffd740", linewidth=1.5, label="Median turns")
     ax2.plot(gens, worst_turns,  color="#ff5252", linewidth=1.0, label="Worst turns", alpha=0.6)
@@ -620,9 +610,8 @@ def show_eternity_graphs(progress_path: str = None):
     ax2_r.legend(loc="upper right", fontsize=8)
     ax2.grid(True, alpha=0.2)
 
-    # ── Score gains ───────────────────────────────────────────────────────
     ax3.plot(gens, sc_survival, color="#40c4ff", linewidth=1.5, label="Survival")
-    ax3.plot(gens, sc_towards,  color="#00e676", linewidth=1.5, label="→ Food (towards)")
+    ax3.plot(gens, sc_towards,  color="#00e676", linewidth=1.5, label="Food (towards)")
     ax3.plot(gens, sc_ate,      color="#ffd740", linewidth=1.5, label="Ate food")
     ax3.axhline(0, color="white", linewidth=0.4, alpha=0.35)
     ax3.set_title("Score breakdown — gains (best agent)", fontsize=10)
@@ -631,8 +620,7 @@ def show_eternity_graphs(progress_path: str = None):
     ax3.legend(loc="upper left", fontsize=8)
     ax3.grid(True, alpha=0.2)
 
-    # ── Score penalties ───────────────────────────────────────────────────
-    ax4.plot(gens, sc_against, color="#ff5252", linewidth=1.5, label="← Food (away)")
+    ax4.plot(gens, sc_against, color="#ff5252", linewidth=1.5, label="Food (away)")
     ax4.plot(gens, sc_bomb,    color="#ff9800", linewidth=1.5, label="Bomb penalty")
     ax4.axhline(0, color="white", linewidth=0.4, alpha=0.35)
     ax4.set_title("Score breakdown — penalties (best agent)", fontsize=10)
@@ -641,7 +629,6 @@ def show_eternity_graphs(progress_path: str = None):
     ax4.legend(loc="lower left", fontsize=8)
     ax4.grid(True, alpha=0.2)
 
-    # Phase markers (after all axes are drawn so ylim is set)
     for ax in (ax1, ax2, ax3, ax4):
         _phase_markers(ax)
 
@@ -652,6 +639,20 @@ def show_eternity_graphs(progress_path: str = None):
         pass
     finally:
         plt.close("all")
+
+
+def show_eternity_graphs(progress_path: str = None):
+    """Spawn a background process to show the progress graph — training is not paused."""
+    from multiprocessing import Process
+
+    path = progress_path or _PROGRESS_PATH
+    if not os.path.isfile(path):
+        print("  No progress data to plot yet.")
+        return
+
+    p = Process(target=_plot_progress_worker, args=(path,), daemon=True)
+    p.start()
+    print(f"  Graph window opened in background (PID {p.pid}) — training continues.")
 
 
 _SUMMARY_FIELDS = [
@@ -744,9 +745,67 @@ def save_eternity_package(
 
 # ── Startup menu ───────────────────────────────────────────────────────────────
 
+def _read_median_from_progress(path: str) -> tuple[float, int]:
+    """Read prev_median and gen_offset from an existing progress CSV.
+    Uses the same tail-window formula as tail_stats().
+    Returns (prev_median, gen_offset).
+    """
+    if not os.path.isfile(path):
+        return 0.0, 0
+    rows = []
+    with open(path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        return 0.0, 0
+    gen_offset  = int(float(rows[-1].get("generation", 0)))
+    tail        = rows[-WINDOW:]
+    prev_median = statistics.median(
+        [float(r.get("elite_median_score") or 0) for r in tail]
+    )
+    return prev_median, gen_offset
+
+
+def _load_checkpoint():
+    """Load brains + veteran from checkpoint folder, compute prev_median from progress CSV.
+    Returns a startup-dict or None if checkpoint is missing.
+    """
+    elite_path   = os.path.join(_CHECKPOINT_DIR, "elite.pkl")
+    veteran_path = os.path.join(_CHECKPOINT_DIR, "veteran.pkl")
+
+    if not os.path.isfile(elite_path):
+        print("  Kein Checkpoint gefunden (elite.pkl fehlt).")
+        return None
+
+    with open(elite_path, "rb") as f:
+        data = pickle.load(f)
+    brains = data.get("brains", data) if isinstance(data, dict) else data
+
+    veteran = None
+    if os.path.isfile(veteran_path):
+        with open(veteran_path, "rb") as f:
+            vdata = pickle.load(f)
+        veteran = vdata.get("network") if isinstance(vdata, dict) else vdata
+
+    prev_median, gen_offset = _read_median_from_progress(_PROGRESS_PATH)
+
+    print(f"  Checkpoint: {len(brains)} Gehirne geladen")
+    print(f"  Letzter Median (letzte {WINDOW} Gens): {prev_median:.2f}")
+    print(f"  Fortschritt ab Generation: {gen_offset}")
+    if veteran is not None:
+        print(f"  Veteran longevity: {getattr(veteran, 'longevity', '?')}")
+
+    return {
+        "mode"       : "checkpoint",
+        "brains"     : brains,
+        "prev_median": prev_median,
+        "veteran"    : veteran,
+        "gen_offset" : gen_offset,
+    }
+
+
 def _pick_elite_seed():
     """List available elite .pkl files and let user pick one.
-    Returns (brains, prev_median) or None for fresh start.
+    Returns a startup-dict or None for fresh start.
     """
     import glob as _glob
     patterns = [
@@ -792,23 +851,30 @@ def _pick_elite_seed():
         prev_median = 0.0
 
     print(f"  -> Seed geladen, prev_median = {prev_median:.2f}")
-    return brains, prev_median
+    return {
+        "mode"       : "seed",
+        "brains"     : brains,
+        "prev_median": prev_median,
+        "veteran"    : None,
+        "gen_offset" : 0,
+    }
 
 
 def _startup_menu():
-    """Ask user whether to bootstrap fresh or load a seed.
-    Returns (brains, prev_median) or None for fresh start.
-    """
+    """Ask how to start. Returns a startup-dict or None for fresh Bootstrap."""
     width = 60
     print("\n" + "=" * width)
     print("  Eternity Deep — Start")
     print("=" * width)
-    print("  [1] Neu starten   (Phase 1 Bootstrap)")
-    print("  [2] Seed laden    (direkt in Phase 2 Evolution)")
+    print("  [1] Neu starten        (Phase 1 Bootstrap)")
+    print("  [2] Seed laden         (Elite-PKL, direkt in Phase 2)")
+    print("  [3] Checkpoint weiter  (letzter Deep-Checkpoint, Phase 2)")
     print()
-    choice = input("  Auswahl [1/2]: ").strip()
+    choice = input("  Auswahl [1/2/3]: ").strip()
     if choice == "2":
         return _pick_elite_seed()
+    if choice == "3":
+        return _load_checkpoint()
     print("  -> Neu starten")
     return None
 
@@ -844,14 +910,19 @@ def main():
           f"Max failures: {MAX_FAILURES}")
     print(f"Adaptive mutations: EXPLORE (structural) -> EXPLOIT (weights) after {SWITCH_TO_EXPLOIT_AFTER} failures")
 
-    _startup_seed = _startup_menu()   # None = fresh start, (brains, median) = seeded
+    _startup_seed = _startup_menu()   # None = fresh start, dict = seeded/checkpoint
 
     try:
       while True:
         run_index += 1
         gen_offset = 0
-        # Fresh progress CSV for each eternity run
-        if os.path.isfile(_PROGRESS_PATH):
+        # Keep progress CSV when resuming from checkpoint; clear it otherwise
+        _is_checkpoint = (
+            run_index == 1
+            and isinstance(_startup_seed, dict)
+            and _startup_seed.get("mode") == "checkpoint"
+        )
+        if not _is_checkpoint and os.path.isfile(_PROGRESS_PATH):
             os.remove(_PROGRESS_PATH)
 
         _banner(f"ETERNITY RUN #{run_index}")
@@ -859,21 +930,31 @@ def main():
         mutation_mode = "explore"
         _apply_mutation_mode(mutation_mode)
 
-        # ── Phase 1: Bootstrap — or skip if seed was loaded ───────────────
+        # ── Phase 1: Bootstrap — or skip if seed/checkpoint was loaded ──────
         if _startup_seed is not None and run_index == 1:
-            loaded_brains, loaded_median = _startup_seed
-            _startup_seed = None
+            loaded_mode    = _startup_seed["mode"]
+            loaded_brains  = _startup_seed["brains"]
+            loaded_median  = _startup_seed["prev_median"]
+            loaded_veteran = _startup_seed.get("veteran")
+            loaded_offset  = _startup_seed.get("gen_offset", 0)
+            _startup_seed  = None
             current_seed          = loaded_brains[:max(ELITISM, 1)]
             prev_median           = loaded_median
-            best_veteran          = current_seed[0] if current_seed else None
+            best_veteran          = loaded_veteran or (current_seed[0] if current_seed else None)
+            gen_offset            = loaded_offset
             last_good_results     = []
             last_good_elite       = list(current_seed)
             failure_count         = 0
             evo_round             = 0
             successful_improvements = 0
             boot_attempt          = 0
-            print(f"\n  Seeded start: {len(current_seed)} brains, prev_median = {prev_median:.2f}")
-            _sub("Entering evolution phase (seeded)")
+            if loaded_mode == "checkpoint":
+                print(f"\n  Checkpoint: {len(current_seed)} Gehirne, "
+                      f"prev_median = {prev_median:.2f}, gen_offset = {gen_offset}")
+                _sub("Evolution fortgesetzt (Checkpoint)")
+            else:
+                print(f"\n  Seeded start: {len(current_seed)} brains, prev_median = {prev_median:.2f}")
+                _sub("Entering evolution phase (seeded)")
         else:
             boot_attempt = 0
             while True:

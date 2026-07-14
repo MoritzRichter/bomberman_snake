@@ -742,6 +742,77 @@ def save_eternity_package(
     return folder
 
 
+# ── Startup menu ───────────────────────────────────────────────────────────────
+
+def _pick_elite_seed():
+    """List available elite .pkl files and let user pick one.
+    Returns (brains, prev_median) or None for fresh start.
+    """
+    import glob as _glob
+    patterns = [
+        os.path.join(ETERNITY_DIR, "**", "elite*.pkl"),
+        os.path.join(_HERE, "Eternity-Run", "**", "elite*.pkl"),
+        os.path.join(_HERE, "seeds", "*.pkl"),
+    ]
+    files = []
+    for pat in patterns:
+        files += _glob.glob(pat, recursive=True)
+    files = sorted(set(files), key=os.path.getmtime, reverse=True)
+
+    if not files:
+        print("  Keine Elite-Dateien gefunden. Starte neu.")
+        return None
+
+    print("\n  Verfügbare Seeds (neueste zuerst):")
+    for i, f in enumerate(files, 1):
+        rel   = os.path.relpath(f, _HERE)
+        mtime = datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M")
+        print(f"  [{i:2d}] {rel}  ({mtime})")
+
+    print()
+    try:
+        raw = input("  Nummer eingeben (Enter = Neustart): ").strip()
+        if not raw:
+            print("  -> Neustart")
+            return None
+        path = files[int(raw) - 1]
+    except (ValueError, IndexError):
+        print("  Ungültige Auswahl. Starte neu.")
+        return None
+
+    with open(path, "rb") as f:
+        data = pickle.load(f)
+    brains = data.get("brains", data) if isinstance(data, dict) else data
+    print(f"  {len(brains)} Gehirne geladen: {os.path.relpath(path, _HERE)}")
+
+    raw_med = input("  Bekannter Median (Enter = 0.0): ").strip()
+    try:
+        prev_median = float(raw_med) if raw_med else 0.0
+    except ValueError:
+        prev_median = 0.0
+
+    print(f"  -> Seed geladen, prev_median = {prev_median:.2f}")
+    return brains, prev_median
+
+
+def _startup_menu():
+    """Ask user whether to bootstrap fresh or load a seed.
+    Returns (brains, prev_median) or None for fresh start.
+    """
+    width = 60
+    print("\n" + "=" * width)
+    print("  Eternity Deep — Start")
+    print("=" * width)
+    print("  [1] Neu starten   (Phase 1 Bootstrap)")
+    print("  [2] Seed laden    (direkt in Phase 2 Evolution)")
+    print()
+    choice = input("  Auswahl [1/2]: ").strip()
+    if choice == "2":
+        return _pick_elite_seed()
+    print("  -> Neu starten")
+    return None
+
+
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
 def main():
@@ -773,6 +844,8 @@ def main():
           f"Max failures: {MAX_FAILURES}")
     print(f"Adaptive mutations: EXPLORE (structural) -> EXPLOIT (weights) after {SWITCH_TO_EXPLOIT_AFTER} failures")
 
+    _startup_seed = _startup_menu()   # None = fresh start, (brains, median) = seeded
+
     try:
       while True:
         run_index += 1
@@ -783,46 +856,60 @@ def main():
 
         _banner(f"ETERNITY RUN #{run_index}")
 
-        # ── Phase 1: Bootstrap (always in EXPLORE mode) ───────────────────
         mutation_mode = "explore"
         _apply_mutation_mode(mutation_mode)
-        boot_attempt = 0
-        while True:
-            boot_attempt += 1
-            _sub(f"Bootstrap attempt #{boot_attempt}")
-            results, sorted_brains, veteran = run_training(
-                seed_brains=None,
-                run_tag=f"Boot{boot_attempt}",
-                pool=pool_ctx,
-                visual_ctx=visual_ctx,
-            )
-            max_best, boot_median = tail_stats(results)
-            print(
-                f"\n  └ last-{WINDOW} best: {max_best:.2f}  "
-                f"(threshold: {BOOTSTRAP_THRESHOLD})  "
-                f"median: {boot_median:.2f}"
-            )
-            if max_best > BOOTSTRAP_THRESHOLD:
-                print(f"  ✓  Bootstrap passed!")
-                save_checkpoint(veteran, sorted_brains[:max(ELITISM, 1)], results,
-                                label=f"run{run_index} bootstrap")
-                _append_progress(results, gen_offset)
-                gen_offset += GENERATIONS_PER_RUN
-                break
-            print(f"  ✗  Bootstrap failed — restarting from scratch")
 
-        # store state after successful bootstrap
-        current_seed          = sorted_brains[:max(ELITISM, 1)]
-        prev_median           = boot_median
-        best_veteran          = veteran
-        last_good_results     = results
-        last_good_elite       = list(current_seed)
-        failure_count         = 0
-        evo_round             = 0
-        successful_improvements = 0
+        # ── Phase 1: Bootstrap — or skip if seed was loaded ───────────────
+        if _startup_seed is not None and run_index == 1:
+            loaded_brains, loaded_median = _startup_seed
+            _startup_seed = None
+            current_seed          = loaded_brains[:max(ELITISM, 1)]
+            prev_median           = loaded_median
+            best_veteran          = current_seed[0] if current_seed else None
+            last_good_results     = []
+            last_good_elite       = list(current_seed)
+            failure_count         = 0
+            evo_round             = 0
+            successful_improvements = 0
+            boot_attempt          = 0
+            print(f"\n  Seeded start: {len(current_seed)} brains, prev_median = {prev_median:.2f}")
+            _sub("Entering evolution phase (seeded)")
+        else:
+            boot_attempt = 0
+            while True:
+                boot_attempt += 1
+                _sub(f"Bootstrap attempt #{boot_attempt}")
+                results, sorted_brains, veteran = run_training(
+                    seed_brains=None,
+                    run_tag=f"Boot{boot_attempt}",
+                    pool=pool_ctx,
+                    visual_ctx=visual_ctx,
+                )
+                max_best, boot_median = tail_stats(results)
+                print(
+                    f"\n  └ last-{WINDOW} best: {max_best:.2f}  "
+                    f"(threshold: {BOOTSTRAP_THRESHOLD})  "
+                    f"median: {boot_median:.2f}"
+                )
+                if max_best > BOOTSTRAP_THRESHOLD:
+                    print(f"  ✓  Bootstrap passed!")
+                    save_checkpoint(veteran, sorted_brains[:max(ELITISM, 1)], results,
+                                    label=f"run{run_index} bootstrap")
+                    _append_progress(results, gen_offset)
+                    gen_offset += GENERATIONS_PER_RUN
+                    break
+                print(f"  ✗  Bootstrap failed — restarting from scratch")
 
-        print(f"\n  Bootstrap median (last {WINDOW} gens): {prev_median:.2f}")
-        _sub("Entering evolution phase")
+            current_seed          = sorted_brains[:max(ELITISM, 1)]
+            prev_median           = boot_median
+            best_veteran          = veteran
+            last_good_results     = results
+            last_good_elite       = list(current_seed)
+            failure_count         = 0
+            evo_round             = 0
+            successful_improvements = 0
+            print(f"\n  Bootstrap median (last {WINDOW} gens): {prev_median:.2f}")
+            _sub("Entering evolution phase")
 
         # ── Phase 2: Evolution loop ────────────────────────────────────────
         while failure_count < MAX_FAILURES:

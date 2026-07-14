@@ -204,3 +204,136 @@ Konfigurierbare Eltern-Selektion neben dem bisherigen Power-Modus:
 - `TOURNAMENT_K = 5` — Kandidatenanzahl pro Tournament
 
 Tournament-Selection ist bereits in `selection.py` implementiert; `eternity.py` übergibt nun `power=` und `k=` an alle `getOffspring`-Aufrufe.
+
+---
+
+## 21. Kumulativer Fortschritts-CSV — `eternity.py`
+`_append_progress(results, gen_offset)` schreibt nach jedem erfolgreichen Bootstrap und jeder Evo-Verbesserung die Ergebnisse an `Eternity-Run/checkpoint/progress.csv` an. Generationsnummern sind kumulativ verschoben (`gen_offset`), sodass der Gesamtfortschritt über alle Phasen hinweg in einer einzigen CSV sichtbar ist (Bootstrap = Gen 1–300, erste Verbesserung = 301–600 usw.).
+
+---
+
+## 22. Visuelle Best-Brain-Demo — `eternity.py`
+`VISUAL = False` Config-Flag. Wenn aktiviert: zwischen den Generationen spielt der beste Agent eine Demo-Runde im Pygame-Fenster.
+
+- `_build_obs(game)` — baut ein 2D-Grid ohne numpy für das Rendering
+- `_run_visual_demo(brain, visual_ctx, header)` — rendert ein komplettes Spiel mit Tick-Budget pro Frame
+- `run_training()` bekommt `visual_ctx`-Parameter und ruft `_run_visual_demo(sorted_brains[0], ...)` nach jeder Generation auf
+- `main()` erstellt das Pygame-Fenster einmalig und gibt es als `visual_ctx`-Dict weiter; `pygame.quit()` im `finally`-Block
+
+Multiprocessing-Evaluation läuft headless und unberührt; das Fenster ist nur zwischen Generationen aktiv.
+
+---
+
+## 23. Eternity-Graphen — `eternity.py`
+`show_eternity_graphs()` liest den kumulativen `progress.csv` und zeigt ein 4-Panel-Matplotlib-Diagramm (Dark Background):
+- Score-Übersicht (Best / Median / Elite-Median / Mean / Worst)
+- Turns + Food-Balkendiagramm
+- Score-Gewinne (Survival / Towards / Ate)
+- Score-Strafen (Against / Bomb)
+
+Gestrichelte vertikale Linien markieren jede erfolgreiche Phasengrenze. Aufruf automatisch nach Package-Speicherung und bei `KeyboardInterrupt`.
+
+---
+
+## 24. `inspect_network.py` — neues Programm
+Interaktiver Pygame-Visualisierer für gespeicherte Veteranen-Netzwerke.
+
+### Layout
+- Fenster 1400×840, Canvas links (1100px), Sidebar rechts (300px)
+- **BFS Longest-Path**: Tiefe jedes Nodes wird aus der Graphstruktur berechnet → Spalten
+- Output-Nodes immer in der letzten Spalte; nicht erreichbare Nodes ebenfalls dort
+
+### Interaktion
+- **Pan**: Linke Maustaste ziehen
+- **Zoom**: Scrollrad (zentriert auf Cursor)
+- **Klick**: Trifft Node oder Verbindung → Selektion + Sidebar-Details
+- **T / Shift+T**: Gewichtsschwelle heben/senken (schwache Verbindungen ausblenden)
+- **L**: Gewichts-Labels an/aus
+- **R**: Kamera zurücksetzen
+- **ESC / Q**: Zurück zur Dateiauswahl
+
+### Darstellung
+- Input-Nodes blau, Hidden orange, Output grün, Selektion gelb
+- Verbindungsfarbe: grün (positiv) / rot (negativ); Interpolation von `C_WEAK=(110,110,135)` zu Zielfarbe (Minimum-Alpha 80 für Sichtbarkeit)
+- Node-Index als kleine Zahl unterhalb jedes Nodes
+- Aktivierungsfunktionsname innerhalb der Node (ab Zoom > 0.5)
+
+### Dateiauswahl
+`find_veterans()` durchsucht per `os.walk` den gesamten Projektordner nach `veteran*.pkl` (neueste zuerst). Direktpfad als CLI-Argument möglich.
+
+### Bugfixes (nach erstem Test)
+- **KeyError beim Node-Klick**: Verbindungen referenzierten Nodes außerhalb von `pos` (orphaned connections nach Mutationen). Fix: `if id(c.from_node) not in pos: continue` in `draw_network` und `hit_conn`
+- **Schlechter Kontrast**: Farb-Interpolation startete bei `BG=(18,18,26)` → schwache Verbindungen unsichtbar. Fix: Interpolation von `C_WEAK=(110,110,135)`, Minimum-Alpha = 80
+
+---
+
+## 25. `eternity_deep.py` — neues Programm
+Kopie von `eternity.py` mit adaptiver Mutations-Strategie für tiefere Netzwerke. Ausgabe nach `Eternity-Deep/`.
+
+### Unterschiede zu `eternity.py`
+
+| Parameter | eternity.py | eternity_deep.py | Grund |
+|---|---|---|---|
+| `SELECTION_POWER` | 4 | 2 | Strukturelle Mutanten überleben länger |
+| `PROFILE_NAME` | `"raw"` | `"full"` | 19 Sensoren statt 108 Rohdaten |
+| `BOOTSTRAP_THRESHOLD` | 1000 | 500 | Angepasst an full-Profil |
+| `MAX_FAILURES` | 5 | 10 | Mehr Zeit für tiefe Nets |
+
+### Adaptive Mutations-Gewichte
+Zwei Presets, die zur Laufzeit in `evolution.MUTATION_WEIGHTS` geschrieben werden:
+
+**EXPLORE** (Standard — strukturelles Wachstum):
+- `ADD_NODE: 4`, `ADD_LAYER: 3`, `ADD_CONN: 3` — deutlich häufiger als bisher
+- `MOD_WEIGHT: 2`, `MOD_BIAS: 2` — reduziert während Wachstum
+
+**EXPLOIT** (wenn festgesteckt — Gewichtstuning):
+- `MOD_WEIGHT: 6`, `MOD_BIAS: 5` — dominant
+- `ADD_LAYER: 0`, `REMOVE_NODE: 0`, `REMOVE_CONN: 0` — keine strukturellen Änderungen
+
+### Wechsel-Logik
+- Standard: EXPLORE
+- Nach `SWITCH_TO_EXPLOIT_AFTER = 3` aufeinanderfolgenden Evo-Fehlern → EXPLOIT
+- Nach jeder Verbesserung → zurück zu EXPLORE (oszilliert)
+
+`_apply_mutation_mode(mode)` schreibt das gewählte Preset per `_evo.MUTATION_WEIGHTS.update(weights)` direkt in das Evolution-Modul. Sicher, da `mutatePopulation` ausschließlich im Hauptprozess läuft (Worker evaluieren nur).
+
+---
+
+## 26. `play.py` — Veterans aus Eternity-Ordnern laden
+`list_veterans()` durchsucht jetzt drei Quellen statt nur `veterans/`:
+- `veterans/*.pkl`
+- `Eternity-Run/**/veteran*.pkl` (rekursiv)
+- `Eternity-Deep/**/veteran*.pkl` (rekursiv)
+
+Neue Hilfsfunktion `veteran_label(path)` erzeugt kurze Labels für die Dateiliste:
+- `[Vet]  datei.pkl`
+- `[Run/run001]  veteran_xxx.pkl`
+- `[Deep/ckpt]  veteran.pkl`
+
+Label wird auch im Info-Panel während des Spiels angezeigt.
+
+---
+
+## 27. `plot_csv.py` — Simplified View
+Neue Ansicht: nur die wichtigsten Metriken als geglättete Linien, keine Rohdaten sichtbar.
+
+**Aktivierung:**
+- Konstante oben: `SIMPLE_VIEW = True`
+- CLI-Flag: `python plot_csv.py -s` oder `python plot_csv.py bericht.csv -s`
+
+**Darstellung:**
+- 2 Panels nebeneinander (Score links, Turns rechts)
+- Best score, Median score, Elite-Median (falls vorhanden), Best turns, Median turns
+- Food eaten als gestrichelte Linie auf Twin-Achse
+
+**Glättung** (`_smooth(values, window)`):
+- Rolling Average via `numpy.convolve` mit Edge-Padding
+- `SMOOTH_WINDOW = 0` → automatische Fenstergröße: `max(5, len(daten) / 20)`
+- Manuell auf feste Zahl setzbar (z.B. `SMOOTH_WINDOW = 20`)
+
+---
+
+## 28. `inspect_network.py` — Checkpoint-Veterans erkannt
+`find_veterans()` filterte bisher nur `veteran_*.pkl` (mit Underscore). Checkpoint-Dateien heißen `veteran.pkl` (ohne Suffix) und wurden übersehen.
+
+Fix: `f.startswith("veteran_")` → `f.startswith("veteran")` — erkennt jetzt beide Formate.

@@ -126,6 +126,11 @@ def network_to_arrays(brain):
     return biases, squash_ids, in_ptr, in_src, in_wgt, brain.input_size, brain.output_size, n
 
 
+# Module-level caches — survive across calls within the same process/thread
+_profile_arrays_cache: dict = {}   # id(profile) -> (sensor_weights, active_indices)
+_score_params_cache:   dict = {}   # scoring_mode -> float64[6]
+
+
 def profile_to_arrays(profile):
     """Convert a profile dict → sensor weight array + active-index array.
 
@@ -546,8 +551,15 @@ def eval_brain_fast(brain, levels_to_play, max_turns, lowest_score,
 
     biases, squash_ids, in_ptr, in_src, in_wgt, n_inputs, n_outputs, n_nodes = \
         network_to_arrays(brain)
-    sensor_weights, active_indices = profile_to_arrays(profile)
-    sp = score_params_from_config()
+
+    pid = id(profile)
+    if pid not in _profile_arrays_cache:
+        _profile_arrays_cache[pid] = profile_to_arrays(profile)
+    sensor_weights, active_indices = _profile_arrays_cache[pid]
+
+    if scoring_mode not in _score_params_cache:
+        _score_params_cache[scoring_mode] = score_params_from_config()
+    sp = _score_params_cache[scoring_mode]
 
     totals = {k: 0.0 for k in ("score", "turns", "food_eaten",
                                 "score_survival", "score_towards",

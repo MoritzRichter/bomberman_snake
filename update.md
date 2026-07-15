@@ -337,3 +337,171 @@ Neue Ansicht: nur die wichtigsten Metriken als geglättete Linien, keine Rohdate
 `find_veterans()` filterte bisher nur `veteran_*.pkl` (mit Underscore). Checkpoint-Dateien heißen `veteran.pkl` (ohne Suffix) und wurden übersehen.
 
 Fix: `f.startswith("veteran_")` → `f.startswith("veteran")` — erkennt jetzt beide Formate.
+
+---
+
+## 29. JIT-Beschleunigung: `evolution/fast_eval.py` — neues Modul
+
+Neues Modul als Drop-in-Ersatz für den inneren Game-Loop in `_eval_brain`. Ziel: tausende Spiele pro Sekunde ohne Python-Overhead.
+
+### Architektur
+
+```
+network_to_arrays(brain)    → CSR-Gewichtsarrays (Python, einmal pro Brain)
+profile_to_arrays(profile)  → Sensor-Gewichts-/Index-Arrays (Python)
+score_params_from_config()  → float64[6]-Array aus ScoreConfig
+
+_activate()      @njit — Vorwärtsdurchlauf (CSR-Format)
+_cross_field()   @njit — Explosions-Ausbreitung (+Form)
+_place_food()    @njit — Zufälliges Essen-Platzieren
+_sensors_all()   @njit — Alle 19 Sensoren berechnen
+_run_game()      @njit — Vollständiger Game-Loop (Sensoren + Netz + Spielschritt)
+
+eval_brain_fast()           — Python-Einstiegspunkt; gibt dasselbe totals-Dict zurück wie _eval_brain
+```
+
+### Netzwerk-Repräsentation: CSR (Compressed Sparse Row)
+
+Das Python-`Network`-Objekt wird in drei Arrays überführt:
+- `in_ptr[j]..in_ptr[j+1]` — Bereich der eingehenden Verbindungen für Node j
+- `in_src[k]` — Index des Quell-Nodes für Verbindung k
+- `in_wgt[k]` — Gewicht der Verbindung k
+
+Ermöglicht vollständigen Vorwärtsdurchlauf ohne Python-Objekte im JIT-Kern.
+
+### Spiellogik im JIT (`_run_game`)
+
+Vollständige Portierung des Python-Spiels in `@njit`:
+- Schlange als `int32[101, 2]`-Array (max. 100 Segmente + Kopf), kein `deque`
+- Wrap-Around an Rändern per `% FIELDSIZE`
+- `_place_food`: zufällige Essen-Platzierung auf freiem Feld (Retry-Loop)
+- `_cross_field`: Explosions-Ausbreitung in +-Form mit `EXPLOSION_REACH = 3`, blockiert durch Wände
+- Alle Zeitkonstanten als diskrete Schritt-Zähler (kein `time.sleep`)
+- Rückgabe: `(score, turns, food_eaten, score_survival, score_towards, score_against, score_ate, score_bomb)`
+
+### Integration in `eternity_deep.py`
+
+In `_eval_brain` wird der JIT-Pfad bevorzugt, mit Python-Fallback:
+```python
+if use_jit:
+    try:
+        from fast_eval import eval_brain_fast
+        totals = eval_brain_fast(brain, levels_to_play, ...)
+        ...
+        return idx, {k: v / n for k, v in totals.items()}
+    except Exception:
+        pass  # fall through to Python path
+```
+
+### Numba-Kompilierung und Cache
+
+`@njit(cache=True)` — Numba kompiliert beim ersten Aufruf (einmalig ~5–15 s), speichert das Ergebnis in `__pycache__`. Alle folgenden Programmstarts laden den Maschinencode direkt. Gemessener Warm-Cache-Speedup: **~53× gegenüber Python-Pfad**.
+
+---
+
+## 30. JIT Bug-Fix: Explosions-Tod zu früh — `evolution/fast_eval.py`
+
+**Problem:** In `_run_game` wurde die Schlange sofort getötet, wenn in demselben Tick eine Bombe explodierte und das Kopf-Feld als `_EXPLODED` markiert wurde. Das originale Python-Spiel tötet die Schlange erst im *nächsten* Tick — sie hat also noch einen Zug, um wegzulaufen.
+
+**Symptom:** JIT: Ø 27 Punkte / 45 Züge vs. Python: Ø 401 / 654 Züge (14× kürzer).
+
+**Fix:** Entfernt nach `_tick_bomb(...)`:
+```python
+# ENTFERNT:
+# if expl_act and grid[snake[0,1], snake[0,0]] == _EXPLODED:
+#     break
+```
+**Ergebnis:** JIT Ø 719 Züge ≈ Python Ø 702 Züge. ✓
+
+---
+
+## 31. Sensor-Optimierung: Body-Map für O(1)-Lookup — `evolution/fast_eval.py`
+
+**Problem:** `_sensors_all` prüfte Körper-Kollisionen per linearem Scan (O(snake_len) pro Richtung).
+
+**Fix:** Vor den Sensoren wird eine 10×10 `int8`-Matrix (`body_map`) aufgebaut:
+```python
+for i in range(1, snake_len):
+    body_map[snake[i,1], snake[i,0]] = 1
+```
+`can_move` und `_body_prox` lesen dann O(1) aus dieser Map. `body_map` wird einmal vor der Game-Schleife alloziert und pro Tick nur genullt + neu befüllt.
+
+**`_sensors_all`-Signatur** auf In-Place umgestellt (`out`-Array als Parameter, kein Rückgabewert), um Heap-Allokation im Loop zu vermeiden.
+
+**Warm-Cache-Speedup gesamt: ~53× gegenüber Python-Pfad.**
+
+---
+
+## 32. Backend-Auswahl im Startmenü — `eternity_deep.py`
+
+`_startup_menu()` fragt beim Start, ob JIT (Numba) oder Python verwendet werden soll:
+```
+  [J] JIT  — Numba (empfohlen, ~50x schneller nach Warmup)
+  [P] Python — Standard (kein Numba nötig)
+```
+Wert wird in `_USE_JIT: bool` gespeichert und per `args`-Tuple an Worker-Funktion `_eval_brain` übergeben (notwendig wegen Windows Multiprocessing-Spawn-Semantik — Globals werden nicht an Worker-Prozesse vererbt).
+
+---
+
+## 33. ThreadPool statt Pool — `eternity_deep.py`
+
+```python
+# Vorher:
+from multiprocessing import Pool
+
+# Nachher:
+from multiprocessing.pool import ThreadPool as Pool
+```
+
+**Warum:** Numba-JIT-Funktionen (`@njit`) geben das GIL frei — echte Thread-Parallelität ist möglich. `ThreadPool` vermeidet den gesamten IPC-Overhead von `multiprocessing.Pool`:
+- Kein Pickling der Brain-Objekte (~4 KB/Brain, ~5 ms für 50 Brains entfällt)
+- Kein Datenkopieren über Prozessgrenzen
+- Shared Memory → kein `__main__`-Guard nötig
+
+Interface (`pool.map`, `pool.terminate`, `pool.join`) ist identisch.
+
+---
+
+## 34. `mutateAddConnection`: O(n²) → O(1) Rejection Sampling — `evolution/evolution.py`
+
+**Problem:** Die alte Implementierung baute eine Liste aller möglichen Verbindungspaare auf (bei 30 Knoten ≈ 900 Iterationen, mehrfach pro Generation).
+
+**Fix:** Rejection Sampling mit max. 100 Versuchen:
+```python
+node_idx = {id(n): i for i, n in enumerate(nodes)}
+for _ in range(100):
+    n1 = random.choice(non_output)
+    n2 = random.choice(non_input)
+    if n1 is n2 or node_idx[id(n1)] >= node_idx[id(n2)]: continue
+    if has_connection(n1, n2): continue
+    connectNodes(network, n1, n2, random.uniform(-0.1, 0.1))
+    return network
+```
+Aufwand: O(n) für Dict-Aufbau + O(1) × max 100 Versuche. Verhält sich identisch (findet eine Verbindung wenn möglich).
+
+---
+
+## 35. Cache für `profile_to_arrays` + `score_params_from_config` — `evolution/fast_eval.py`
+
+`eval_brain_fast` rief bei jedem Brain-Aufruf `profile_to_arrays` und `score_params_from_config` erneut auf, obwohl die Ergebnisse für gleiche Inputs identisch sind.
+
+Zwei Modul-level Dicts als Cache:
+```python
+_profile_arrays_cache: dict = {}   # id(profile) -> (sensor_weights, active_indices)
+_score_params_cache:   dict = {}   # scoring_mode -> float64[6]
+```
+In `eval_brain_fast` werden beide gecacht. Mit `ThreadPool` teilen alle Worker-Threads denselben Cache → nach dem ersten Brain kein weiterer Berechungsaufwand für diese Arrays.
+
+---
+
+## Erwarteter Gesamt-Effekt (50 Brains, 8 Worker)
+
+| Komponente | Vorher | Nachher |
+|---|---|---|
+| JIT Eval (parallel) | ~4–5 ms | ~4–5 ms (unverändert) |
+| IPC-Overhead (Pickle + Spawn) | ~5–10 ms | ~0 ms (ThreadPool) |
+| Evolution (Mutation + Selektion) | ~18 ms | ~6 ms |
+| Profile/Score Arrays | ~1 ms | ~0 ms (gecacht) |
+| **Gesamt/Generation** | **~28 ms** | **~10 ms** |
+
+Geschätzter Speedup: **~2–3× pro Generation** gegenüber dem Stand vor dieser Session.

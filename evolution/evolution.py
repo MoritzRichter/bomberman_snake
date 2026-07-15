@@ -77,33 +77,29 @@ def mutateRemoveNode(network: Network) :
 
 
 #Add random new connection
-def mutateAddConnection(network: Network) :
-    available = []
-
-    for index1, node1 in enumerate(network.nodes) :
-        if node1.type == "output" :
-            continue
-
-        for index2, node2 in enumerate(network.nodes) :
-            if node2.type == "input" :
-                continue
-            if node1 is node2 :
-                continue
-            if index1 > index2 :
-                continue
-            if has_connection(node1, node2) :
-                continue
-
-            available.append([node1, node2])
-
-    if len(available) == 0 :
-        if config.warnings :
-            print("no more connections can be built")
+def mutateAddConnection(network: Network):
+    nodes      = network.nodes
+    non_output = [n for n in nodes if n.type != "output"]
+    non_input  = [n for n in nodes if n.type != "input"]
+    if not non_output or not non_input:
         return network
 
-    pair = random.choice(available)
-    connectNodes(network, pair[0], pair[1], random.uniform(-0.1, 0.1))
+    node_idx = {id(n): i for i, n in enumerate(nodes)}
 
+    for _ in range(100):
+        n1 = random.choice(non_output)
+        n2 = random.choice(non_input)
+        if n1 is n2:
+            continue
+        if node_idx[id(n1)] >= node_idx[id(n2)]:
+            continue
+        if has_connection(n1, n2):
+            continue
+        connectNodes(network, n1, n2, random.uniform(-0.1, 0.1))
+        return network
+
+    if config.warnings:
+        print("no more connections can be built")
     return network
 
 

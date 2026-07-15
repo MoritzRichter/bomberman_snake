@@ -39,7 +39,7 @@ import pickle
 import shutil
 import statistics
 from datetime import datetime
-from multiprocessing import Pool
+from multiprocessing.pool import ThreadPool as Pool
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "evolution"))
 
@@ -245,7 +245,6 @@ def _apply_mutation_mode(mode: str):
 def _eval_brain(args):
     """Evaluate one brain over EVAL_GAMES games; return (idx, averaged stats)."""
     idx, brain, level, max_turns, lowest_score_allowed, profile_name, scoring_mode, use_jit = args
-    apply_scoring_preset(scoring_mode)
     profile = get_profile(profile_name)
 
     levels_to_play = [1, 2, 3] if LEVEL_ROTATION else [level] * EVAL_GAMES
@@ -341,6 +340,7 @@ def run_training(seed_brains=None, run_tag="run", pool=None, visual_ctx=None) ->
     for gen in range(GENERATIONS_PER_RUN):
 
         # ── evaluate all brains (parallel or sequential) ───────────────────
+        apply_scoring_preset(SCORING_MODE)   # set config once in main thread; workers share memory
         args = [
             (i, b, LEVEL, config.max_turns, config.lowest_score_allowed, PROFILE_NAME, SCORING_MODE, _USE_JIT)
             for i, b in enumerate(brains)
@@ -862,11 +862,12 @@ def _pick_elite_seed():
     brains = data.get("brains", data) if isinstance(data, dict) else data
     print(f"  {len(brains)} Gehirne geladen: {os.path.relpath(path, _HERE)}")
 
-    raw_med = input("  Bekannter Median (Enter = 0.0): ").strip()
-    try:
-        prev_median = float(raw_med) if raw_med else 0.0
-    except ValueError:
-        prev_median = 0.0
+    progress_csv = os.path.join(os.path.dirname(path), "progress.csv")
+    prev_median, _ = _read_median_from_progress(progress_csv)
+    if prev_median > 0.0:
+        print(f"  Median aus progress.csv (letzte {WINDOW} Gens): {prev_median:.2f}")
+    else:
+        print(f"  Kein progress.csv im Seed-Ordner — starte mit Median 0.0")
 
     print(f"  -> Seed geladen, prev_median = {prev_median:.2f}")
     return {

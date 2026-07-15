@@ -1,2 +1,10 @@
-pygame
+# Core dependencies
 numpy
+pygame
+matplotlib
+
+# Optional: Numba JIT acceleration
+# Enables ~4-15x faster game evaluation in eternity_deep.py (CPU, no GPU needed).
+# Without it, eternity_deep falls back to the pure-Python path automatically.
+# Install: pip install numba
+numba

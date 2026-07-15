@@ -64,6 +64,8 @@ TOURNAMENT_K         = 5            # candidates drawn per tournament (higher = 
 SCORING_MODE         = "balanced"   # "balanced" | "survival" | "food" | "length"
 ELITISM_RATE         = 0.2
 
+_USE_JIT: bool = True   # set by _startup_menu(); passed into worker args
+
 BOOTSTRAP_THRESHOLD  = 800.0   # bootstrap passes when best_score > this in last WINDOW gens
 IMPROVEMENT_FACTOR   = 1.05     # each evolution run must raise median by this factor
 WINDOW               = 5        # tail window (number of gens) for evaluating a run
@@ -241,20 +243,31 @@ def _apply_mutation_mode(mode: str):
 # ── Parallel worker (module-level so pickle can reach it on Windows) ────────────
 
 def _eval_brain(args):
-    """Evaluate one brain over EVAL_GAMES games; return (idx, averaged stats).
-    agent.start() resets brain.score to 0 each game, so scores are accumulated manually.
-    """
-    idx, brain, level, max_turns, lowest_score_allowed, profile_name, scoring_mode = args
+    """Evaluate one brain over EVAL_GAMES games; return (idx, averaged stats)."""
+    idx, brain, level, max_turns, lowest_score_allowed, profile_name, scoring_mode, use_jit = args
     apply_scoring_preset(scoring_mode)
     profile = get_profile(profile_name)
 
     levels_to_play = [1, 2, 3] if LEVEL_ROTATION else [level] * EVAL_GAMES
 
+    # ── Fast path: Numba JIT ──────────────────────────────────────────────
+    if use_jit:
+        try:
+            from fast_eval import eval_brain_fast  # type: ignore[import]
+            totals = eval_brain_fast(brain, levels_to_play, max_turns,
+                                     lowest_score_allowed, profile, scoring_mode)
+            n = len(levels_to_play)
+            brain.score = totals["score"] / n
+            return idx, {k: v / n for k, v in totals.items()}
+        except Exception:
+            pass  # fall through to Python path
+
+    # ── Python fallback ───────────────────────────────────────────────────
     totals = {k: 0.0 for k in ("score", "turns", "food_eaten", "score_survival",
                                 "score_towards", "score_against", "score_ate", "score_bomb")}
     for lvl in levels_to_play:
         agent = Agent(lvl, max_turns, lowest_score_allowed, lambda: None, profile)
-        agent.start(brain)          # resets brain.score = 0
+        agent.start(brain)
         while not agent.done:
             agent.tick()
         totals["score"]          += brain.score
@@ -329,10 +342,15 @@ def run_training(seed_brains=None, run_tag="run", pool=None, visual_ctx=None) ->
 
         # ── evaluate all brains (parallel or sequential) ───────────────────
         args = [
-            (i, b, LEVEL, config.max_turns, config.lowest_score_allowed, PROFILE_NAME, SCORING_MODE)
+            (i, b, LEVEL, config.max_turns, config.lowest_score_allowed, PROFILE_NAME, SCORING_MODE, _USE_JIT)
             for i, b in enumerate(brains)
         ]
-        raw = pool.map(_eval_brain, args) if pool is not None else [_eval_brain(a) for a in args]
+        if pool is not None:
+            _workers = getattr(pool, "_processes", os.cpu_count() or 4)
+            _chunk   = max(1, len(args) // (_workers * 4))
+            raw = pool.map(_eval_brain, args, chunksize=_chunk)
+        else:
+            raw = [_eval_brain(a) for a in args]
 
         # write scores back to brain objects; build per-index stats lookup
         brain_stats: dict = {}
@@ -862,6 +880,7 @@ def _pick_elite_seed():
 
 def _startup_menu():
     """Ask how to start. Returns a startup-dict or None for fresh Bootstrap."""
+    global _USE_JIT
     width = 60
     print("\n" + "=" * width)
     print("  Eternity Deep — Start")
@@ -871,6 +890,15 @@ def _startup_menu():
     print("  [3] Checkpoint weiter  (letzter Deep-Checkpoint, Phase 2)")
     print()
     choice = input("  Auswahl [1/2/3]: ").strip()
+
+    print()
+    print("  Simulation Backend:")
+    print("  [J] JIT  — Numba (empfohlen, ~50x schneller nach Warmup)")
+    print("  [P] Python — Standard (kein Numba nötig)")
+    backend = input("  Auswahl [J/P, Enter = J]: ").strip().upper()
+    _USE_JIT = (backend != "P")
+    print(f"  -> {'JIT (Numba)' if _USE_JIT else 'Python (Standard)'}")
+
     if choice == "2":
         return _pick_elite_seed()
     if choice == "3":

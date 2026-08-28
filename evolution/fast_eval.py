@@ -23,7 +23,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 try:
     from numba import njit
-    import numba as _nb
     _NUMBA_OK = True
 except ImportError:
     _NUMBA_OK = False

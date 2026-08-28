@@ -14,12 +14,11 @@ class Node:
         self.type  = node_type   # 'input', 'hidden', or 'output'
 
         # Bias shifts the activation threshold of this node.
-        # Initialised to a small random value so networks start with variety.
-        self.bias  = bias   #if bias   is not None else random.uniform(-0.1, 0.1)
+        # Defaults are filled in by build_node(), not here.
+        self.bias   = bias
 
         # The activation function that squashes this node's weighted sum.
-        # Defaults to sigmoid.
-        self.squash = squash #if squash is not None else sigmoid
+        self.squash = squash
 
         self.activation = 0.0  # output value produced by the last forward pass
         self.state      = 0.0  # raw weighted sum before squashing
@@ -186,7 +185,7 @@ def remove_node_from_network(network: Network, node: Node) -> Network :
 # ---------- Forward Pass ---------------------------------------------------
 
 def activate_node(node: Node, input_value=None):
-    if input_value != None:
+    if input_value is not None:
         node.activation = input_value
         return node.activation
 

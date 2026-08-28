@@ -42,9 +42,9 @@ PANEL_W       = 230
 WIN_W         = FIELDSIZE * CELL_PX + PANEL_W
 WIN_H         = FIELDSIZE * CELL_PX
 _HERE         = os.path.dirname(os.path.abspath(__file__))
-VETERANS_DIR  = os.path.join(_HERE, "veterans")
-ETERNITY_RUN  = os.path.join(_HERE, "Eternity-Run")
-ETERNITY_DEEP = os.path.join(_HERE, "Eternity-Deep")
+VETERANS_DIR  = os.path.join(_HERE, "models", "veterans")
+ETERNITY_RUN  = os.path.join(_HERE, "runs", "eternity")
+ETERNITY_DEEP = os.path.join(_HERE, "runs", "eternity_deep")
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 
@@ -85,7 +85,7 @@ def load_veteran(path: str):
 
 
 def list_veterans() -> list[str]:
-    """All veteran .pkl files from veterans/, Eternity-Run/, and Eternity-Deep/, newest first."""
+    """All veteran .pkl files from models/veterans/ and both runs/eternity* trees, newest first."""
     paths = glob.glob(os.path.join(VETERANS_DIR, "*.pkl"))
     paths += glob.glob(os.path.join(ETERNITY_RUN,  "**", "veteran*.pkl"), recursive=True)
     paths += glob.glob(os.path.join(ETERNITY_DEEP, "**", "veteran*.pkl"), recursive=True)
@@ -99,20 +99,19 @@ def list_veterans() -> list[str]:
 
 def veteran_label(path: str) -> str:
     """Short display label: [source/run] filename."""
-    rel   = os.path.relpath(path, _HERE).replace("\\", "/")
-    parts = rel.split("/")
-    src   = parts[0]
-    fname = parts[-1]
-    if src == "veterans":
-        return f"[Vet]  {fname}"
-    # Eternity-Run or Eternity-Deep: parts = [src, subfolder, veteran.pkl]
-    tag_map = {"Eternity-Run": "Run", "Eternity-Deep": "Deep"}
-    short   = tag_map.get(src, src)
-    if len(parts) >= 3:
-        folder = parts[1]
+    fname = os.path.basename(path)
+    for base, short in ((VETERANS_DIR, "Vet"), (ETERNITY_RUN, "Run"), (ETERNITY_DEEP, "Deep")):
+        rel = os.path.relpath(path, base).replace("\\", "/")
+        if rel.startswith(".."):
+            continue
+        # Eternity sources are nested one level deeper: <run-folder>/veteran*.pkl
+        parts = rel.split("/")
+        if short == "Vet" or len(parts) < 2:
+            return f"[{short}]  {fname}"
+        folder  = parts[0]
         run_tag = folder.split("_")[-1] if "_run" in folder else ("ckpt" if folder == "checkpoint" else folder[:8])
         return f"[{short}/{run_tag}]  {fname}"
-    return f"[{short}]  {fname}"
+    return f"[?]  {fname}"
 
 # ── Grid rendering ────────────────────────────────────────────────────────────
 

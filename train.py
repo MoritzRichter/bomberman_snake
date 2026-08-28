@@ -27,12 +27,12 @@ PROFILE_NAME        = "raw"   # "basic" | "bomb_aware" | "timer" | "full" | "raw
 SCORING_MODE        = "balanced"  # "balanced" | "survival" | "food" | "length" | "in_game_score"
 SELECTION_STRATEGY  = "power"  # "power" | "tournament" | "roulette" | "top_n" | "random"
 ELITISM_RATE        = 0.2      # fraction of population that survives unchanged (0.0–0.5)
-_HERE        = os.path.dirname(os.path.abspath(__file__))
-SAVE_PATH          = os.path.join(_HERE, "best_network.pkl")
-VETERANS_DIR       = os.path.join(_HERE, "veterans")
-SEEDS_DIR          = os.path.join(_HERE, "seeds")
-TRAINING_REPORT_DIR = os.path.join(_HERE, "Training_Report")
-SEED_PATH    = None   # set to a seeds/*.pkl path to warm-start from a previous run
+_HERE               = os.path.dirname(os.path.abspath(__file__))
+SAVE_PATH           = os.path.join(_HERE, "models", "best_network.pkl")
+VETERANS_DIR        = os.path.join(_HERE, "models", "veterans")
+SEEDS_DIR           = os.path.join(_HERE, "models", "seeds")
+TRAINING_REPORT_DIR = os.path.join(_HERE, "runs", "reports")
+SEED_PATH    = None   # set to a models/seeds/*.pkl path to warm-start from a previous run
 
 ELITISM = round(ELITISM_RATE * GAMES_COUNT)
 

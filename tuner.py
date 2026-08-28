@@ -14,7 +14,7 @@ Or import and call individually:
     Tuner().search()
     Tuner().search_selection()
 
-Results are saved to tuner_results_<timestamp>.csv.
+Results are saved to runs/tuner/tuner_<search>_<timestamp>.csv.
 """
 import sys
 import os
@@ -23,7 +23,7 @@ import copy
 import time
 import itertools
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'evolution'))
@@ -34,6 +34,8 @@ from selection import STRATEGIES
 from agent import Agent
 from profiles import PROFILES, profile_input_size
 from constants import config as G
+
+TUNER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs", "tuner")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,7 +144,7 @@ class Tuner:
     def search(self):
         """Coarse-to-fine search over sensor profiles and score/mutation parameters."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_path  = f"tuner_params_{timestamp}.csv"
+        csv_path  = os.path.join(TUNER_DIR, f"tuner_params_{timestamp}.csv")
 
         self._header("Profile & Score Parameter Search", csv_path)
 
@@ -175,7 +177,7 @@ class Tuner:
         Elitism rates: 0% / 10% / 20% / 30%
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_path  = f"tuner_selection_{timestamp}.csv"
+        csv_path  = os.path.join(TUNER_DIR, f"tuner_selection_{timestamp}.csv")
 
         self._header("Selection Strategy Search", csv_path)
         configs = self._selection_configs()
@@ -371,6 +373,7 @@ class Tuner:
     def _save_csv(self, path: str):
         if not self._all_results:
             return
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         fields = list(self._all_results[0].keys())
         with open(path, "w", newline="") as f:
             csv.DictWriter(f, fieldnames=fields).writeheader()
@@ -394,14 +397,14 @@ class Tuner:
         print(f"\n  Best  (fitness={fitness:.2f}):")
         for k, v in tc.as_dict().items():
             print(f"    {k:22s}: {v}")
-        print(f"\n  → Copy to train.py:")
+        print("\n  → Copy to train.py:")
         print(f"    PROFILE_NAME       = \"{tc.profile_name}\"")
         print(f"    SELECTION_STRATEGY = \"{tc.selection_strategy}\"")
         print(f"    ELITISM_RATE       = {tc.elitism_rate}")
-        print(f"    # constants.py ScoreConfig:")
+        print("    # constants.py ScoreConfig:")
         print(f"    points_against_food = {tc.score_against_food}")
         print(f"    points_ate_food     = {tc.score_ate_food}")
-        print(f"    # profiles.py (timer/full):")
+        print("    # profiles.py (timer/full):")
         print(f"    food_timer = bomb_timer = {tc.urgency_weight}")
         print()
 
@@ -433,7 +436,7 @@ class Tuner:
         print(f"\n  → Best: {best_tc.selection_strategy}"
               f"  (elite={best_tc.elitism_rate:.0%}"
               f"  fitness={best_fitness:.2f})")
-        print(f"\n  → Copy to train.py:")
+        print("\n  → Copy to train.py:")
         print(f"    SELECTION_STRATEGY = \"{best_tc.selection_strategy}\"")
         print(f"    ELITISM_RATE       = {best_tc.elitism_rate}")
         if best_tc.selection_strategy == "power":

@@ -1,6 +1,11 @@
 # Update-Log — Bomberman Snake ML
 
-Alle größeren Änderungen aus dieser Konversation in chronologischer Reihenfolge.
+Alle größeren Änderungen in chronologischer Reihenfolge.
+
+> **Hinweis:** Historisches Dokument. Die genannten Pfade entsprechen dem Stand zum
+> Zeitpunkt der jeweiligen Änderung — `Eternity-Run/` liegt heute unter `runs/eternity/`,
+> `Eternity-Deep/` unter `runs/eternity_deep/`, `Training_Report/` unter `runs/reports/`,
+> `veterans/` und `seeds/` unter `models/`. Aktuelle Struktur siehe [README](../README.md).
 
 ---
 

@@ -90,8 +90,3 @@ def select_parent(population, strategy: str = "power", **kwargs):
     if strategy == "random":
         return random_selection(population)
     raise ValueError(f"Unknown selection strategy '{strategy}'. Choose from: {STRATEGIES}")
-
-
-# Keep old name for backward compatibility
-def powerSelection(population, selectionPower):
-    return power_selection(population, selectionPower)

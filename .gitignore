@@ -1,119 +1,26 @@
-### C
-# Object files
-*.o
-*.obj
-*.elf
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Debug files
-*.dSYM/
-*.idb
-*.pdb
-
-### Objective-C
-# Xcode user settings
-xcuserdata/
-
-# Xcode build data
-DerivedData/
-
-# Obj-C/Swift specific
-*.hmap
-
-# App packaging
-*.ipa
-*.dSYM.zip
-*.dSYM
-
-# Playgrounds
-timeline.xctimeline
-playground.xcworkspace
-
-### Windows
-# Windows thumbnail cache files
-Thumbs.db
-
-# Folder config file
-[Dd]esktop.ini
-
-# Recycle Bin used on file shares
-$RECYCLE.BIN/
-
-# Windows shortcuts
-*.lnk
-
-### VisualStudio
-# User-specific files
-*.suo
-*.user
-
-# Build results
-[Dd]ebug/
-[Rr]elease/
-x64/
-x86/
-[Ww][Ii][Nn]32/
-[Aa][Rr][Mm]/
-[Aa][Rr][Mm]64/
-[Bb]in/
-[Oo]bj/
-
-# Visual Studio cache/options directory
-.vs/
-
-#python cache
+# ── Python ────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
 
-# MSTest test Results
-[Tt]est[Rr]esult*/
-[Bb]uild[Ll]og.*
+# ── C-Original ────────────────────────────────────────────────────────────
+# Referenz-Implementierung (OpenGL/Linux) — liegt lokal, wird nicht versioniert.
+cg_base
 
-# NuGet
-*.nupkg
-**/[Pp]ackages/*
-!**/[Pp]ackages/build/
-*.nuget.props
-*.nuget.targets
-
-# Publish Web Output
-*.[Pp]ublish.xml
-
-### VS Code
-# VSCode settings (keep shared configuration)
+# ── Editor / IDE ──────────────────────────────────────────────────────────
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
-
-# Local History for Visual Studio Code
+.idea/
 .history/
 
-# Built Visual Studio Code Extensions
-*.vsix
-cg_base
-evolution/__pycache__
-game/__pycache__
+# ── OS ────────────────────────────────────────────────────────────────────
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store

@@ -13,10 +13,10 @@ Phase 2 · Evolution
     If yes  → update seed & prev_median, continue.
     If no   → retry with the same seed (failure_count += 1).
     After MAX_FAILURES consecutive failures:
-        Save Eternity package to  Eternity-Run/<timestamp>/
+        Save Eternity package to  runs/eternity/<timestamp>/
         Restart from Phase 1.
 
-Outputs per saved package (inside Eternity-Run/<timestamp>_run<N>/):
+Outputs per saved package (inside runs/eternity/<timestamp>_run<N>/):
     veteran_<timestamp>.pkl
     elite_<timestamp>.pkl
     training_report_<timestamp>.csv   (from the last improving run)
@@ -82,7 +82,7 @@ RENDER_FPS       = 60      # display refresh rate for the visual window
 MAX_VISUAL_TICKS = 3000    # cap each inter-generation demo at this many game ticks
 
 _HERE           = os.path.dirname(os.path.abspath(__file__))
-ETERNITY_DIR    = os.path.join(_HERE, "Eternity-Run")
+ETERNITY_DIR    = os.path.join(_HERE, "runs", "eternity")
 _SUMMARY_PATH   = os.path.join(ETERNITY_DIR, "eternity_summary.csv")
 _CHECKPOINT_DIR = os.path.join(ETERNITY_DIR, "checkpoint")
 _PROGRESS_PATH  = os.path.join(_CHECKPOINT_DIR, "progress.csv")
@@ -642,7 +642,7 @@ def save_eternity_package(
     successful_improvements: int,
     boot_attempts: int,
 ):
-    """Write veteran + seeds + CSV into a timestamped Eternity-Run sub-folder, then update summary."""
+    """Write veteran + seeds + CSV into a timestamped runs/eternity sub-folder, then update summary."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     folder    = os.path.join(ETERNITY_DIR, f"{timestamp}_run{run_index:03d}")
     os.makedirs(folder, exist_ok=True)
@@ -671,7 +671,7 @@ def save_eternity_package(
     print(f"       elite     : {os.path.basename(seed_path)}")
     print(f"       report    : {os.path.basename(csv_path)}")
     if os.path.isfile(_PROGRESS_PATH):
-        print(f"       progress  : progress.csv")
+        print("       progress  : progress.csv")
 
     update_run_summary({
         "run_index"              : run_index,
@@ -744,13 +744,13 @@ def main():
                 f"median: {boot_median:.2f}"
             )
             if max_best > BOOTSTRAP_THRESHOLD:
-                print(f"  ✓  Bootstrap passed!")
+                print("  ✓  Bootstrap passed!")
                 save_checkpoint(veteran, sorted_brains[:max(ELITISM, 1)], results,
                                 label=f"run{run_index} bootstrap")
                 _append_progress(results, gen_offset)
                 gen_offset += GENERATIONS_PER_RUN
                 break
-            print(f"  ✗  Bootstrap failed — restarting from scratch")
+            print("  ✗  Bootstrap failed — restarting from scratch")
 
         # store state after successful bootstrap
         current_seed          = sorted_brains[:max(ELITISM, 1)]
@@ -822,7 +822,7 @@ def main():
         _banner(f"RUN #{run_index} COMPLETE — {MAX_FAILURES} consecutive failures reached")
         print(f"  Best achieved median : {prev_median:.2f}")
         print(f"  Evolution rounds     : {evo_round}")
-        print(f"  Saving Eternity package ...")
+        print("  Saving Eternity package ...")
         save_eternity_package(
             run_index, best_veteran, last_good_elite, last_good_results,
             final_elite_median      = prev_median,
@@ -831,7 +831,7 @@ def main():
             boot_attempts           = boot_attempt,
         )
         show_eternity_graphs()
-        print(f"\n  Restarting from scratch (Phase 1)...")
+        print("\n  Restarting from scratch (Phase 1)...")
 
     finally:
         if pool_ctx is not None:

@@ -1,9 +1,7 @@
 import random
-import math
 from network import (
     Network, build_node, buildNetwork,
-    connectNodes, disconnect_nodes, has_connection,
-    remove_node_from_network, reindex_network,
+    connectNodes, reindex_network,
 )
 
 # --------------------------------------------------------

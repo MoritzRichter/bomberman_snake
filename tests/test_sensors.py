@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'evolution'))
 
 import unittest
 from game.logic import GameLogic
-from game.constants import Direction, FieldType, FIELDSIZE
+from game.constants import Direction
 from sensors import MoveHelper
 from profiles import get_profile, profile_input_size, limit_profile
 

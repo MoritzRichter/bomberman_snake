@@ -3,7 +3,7 @@ import math
 from network import (
     Network, Node, build_node, buildNetwork,
     connectNodes, disconnect_nodes, has_connection,
-    remove_node_from_network, reindex_network, clone_network,
+    remove_node_from_network, clone_network,
 )
 from constants import config, ALL_ACTIVATIONS
 

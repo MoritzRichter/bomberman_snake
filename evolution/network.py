@@ -112,34 +112,45 @@ def connectNodes(network: Network, from_node: Node, to_node: Node, weight):
 
 
 def clone_network(network: Network) -> Network:
-    """Iterative deep copy — avoids deepcopy recursion errors on large graphs.
-    Copies nodes first, then re-wires connections using an id-map.
+    """Deep copy via normal constructors (CPython key-sharing makes __init__
+    faster than __new__ + manual attrs). Avoids the connectNodes/buildConnection
+    call chain by wiring lists directly.
     """
-    new_net = Network(network.input_size, network.output_size)
+    new_net           = Network(network.input_size, network.output_size)
     new_net.score     = network.score
     new_net.longevity = getattr(network, "longevity", 0)
 
-    node_map = {}
+    node_map     = {}
+    new_nodes    = []
+    input_nodes  = []
+    output_nodes = []
+
     for old in network.nodes:
-        new = Node(old.type, old.bias, old.squash)
-        new.activation = old.activation
-        new.state      = old.state
-        new.index      = old.index
-        node_map[id(old)] = new
-        new_net.nodes.append(new)
-        if old.type == "input":
-            new_net.input_nodes.append(new)
-        elif old.type == "output":
-            new_net.output_nodes.append(new)
+        nd       = Node(old.type, old.bias, old.squash)
+        nd.index = old.index
+        # activation/state are 0.0 from __init__ and overwritten by activate_network anyway
+        node_map[id(old)] = nd
+        new_nodes.append(nd)
+        t = old.type
+        if t == "input":
+            input_nodes.append(nd)
+        elif t == "output":
+            output_nodes.append(nd)
 
-    for old_conn in network.connections:
-        connectNodes(
-            new_net,
-            node_map[id(old_conn.from_node)],
-            node_map[id(old_conn.to_node)],
-            old_conn.weight,
-        )
+    new_net.nodes        = new_nodes
+    new_net.input_nodes  = input_nodes
+    new_net.output_nodes = output_nodes
 
+    new_conns = []
+    for oc in network.connections:
+        fn  = node_map[id(oc.from_node)]
+        tn  = node_map[id(oc.to_node)]
+        c   = Connection(fn, tn, oc.weight)
+        fn.connections_out.append(c)
+        tn.connections_in.append(c)
+        new_conns.append(c)
+
+    new_net.connections = new_conns
     return new_net
 
 

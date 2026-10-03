@@ -55,7 +55,8 @@ def _build_level_grids():
 
 _LEVEL_GRIDS = _build_level_grids()
 
-# Ordered list of all 19 sensor names (must match SENSOR_FUNCS in sensors.py)
+# Ordered list of all sensor names (must match SENSOR_FUNCS in sensors.py).
+# New sensors are appended at the bottom so old 19-input networks stay compatible.
 _SENSOR_NAMES = [
     "can_move_forward",  # 0
     "can_move_left",     # 1
@@ -76,7 +77,15 @@ _SENSOR_NAMES = [
     "body_right",        # 16
     "is_food_backward",  # 17
     "is_bomb_backward",  # 18
+    "body_backward",     # 19
+    "wall_forward",      # 20
+    "wall_left",         # 21
+    "wall_right",        # 22
+    "explosion_forward", # 23
+    "explosion_left",    # 24
+    "explosion_right",   # 25
 ]
+_N_SENSORS = len(_SENSOR_NAMES)  # 26
 
 # ---------------------------------------------------------------------------
 # Python helper: convert NEAT Network → flat numpy arrays (CSR format)
@@ -145,7 +154,7 @@ def profile_to_arrays(profile):
                                       (used to pack activations in network-input order)
     """
     name_to_idx = {name: i for i, name in enumerate(_SENSOR_NAMES)}
-    weights = np.zeros(19, dtype=np.float64)
+    weights = np.zeros(_N_SENSORS, dtype=np.float64)
     active  = []
     for name, w in profile.items():
         if name == "_raw":
@@ -239,7 +248,7 @@ if _NUMBA_OK:
                      food_x, food_y, bomb_x, bomb_y, bomb_active,
                      food_timer, bomb_timer, expl_active,
                      weights):
-        """Fill `out` (19,) with weighted sensor values.
+        """Fill `out` (_N_SENSORS,) with weighted sensor values.
         `body_map` (10×10 int8) is built here for O(1) body lookups.
         Both arrays are pre-allocated by the caller to avoid per-turn allocation.
         """
@@ -251,10 +260,11 @@ if _NUMBA_OK:
             body_map[snake[i, 1], snake[i, 0]] = 1
 
         # Direction lookup tables  LEFT=0  RIGHT=1  UP=2  DOWN=3
-        tl = (3, 2, 0, 1)   # TURN_LEFT
-        tr = (2, 3, 1, 0)   # TURN_RIGHT
-        dx = (-1, 1, 0,  0)
-        dy = ( 0, 0, 1, -1)
+        tl   = (3, 2, 0, 1)   # TURN_LEFT
+        tr   = (2, 3, 1, 0)   # TURN_RIGHT
+        back = (1, 0, 3, 2)   # TURN_BACK (opposite)
+        dx   = (-1, 1, 0,  0)
+        dy   = ( 0, 0, 1, -1)
 
         hx = snake[0, 0]
         hy = snake[0, 1]
@@ -316,13 +326,45 @@ if _NUMBA_OK:
         out[15] = _body_prox(tl[direction])
         out[16] = _body_prox(tr[direction])
 
-        # --- 17-18: backward ---
-        back = (1, 0, 3, 2)
+        # --- 17-18: backward food / bomb ---
         out[17] = _food_dist(back[direction])
         out[18] = _bomb_dist(back[direction])
 
+        # --- 19: body_backward ---
+        out[19] = _body_prox(back[direction])
+
+        # --- 20-22: wall proximity (wall + body + explosion blocks) ---
+        def _wall_prox(abs_d):
+            wx = hx; wy = hy
+            for dist in range(1, _FS):
+                wx = (wx + dx[abs_d]) % _FS
+                wy = (wy + dy[abs_d]) % _FS
+                if grid[wy, wx] != _FREE or body_map[wy, wx] != 0:
+                    return 1.0 - dist / _FS
+            return 0.0
+
+        out[20] = _wall_prox(direction)
+        out[21] = _wall_prox(tl[direction])
+        out[22] = _wall_prox(tr[direction])
+
+        # --- 23-25: explosion proximity ray cast ---
+        def _expl_prox(abs_d):
+            if not expl_active:
+                return 0.0
+            ex = hx; ey = hy
+            for dist in range(1, _FS):
+                ex = (ex + dx[abs_d]) % _FS
+                ey = (ey + dy[abs_d]) % _FS
+                if grid[ey, ex] == _EXPLODED:
+                    return 1.0 - dist / _FS
+            return 0.0
+
+        out[23] = _expl_prox(direction)
+        out[24] = _expl_prox(tl[direction])
+        out[25] = _expl_prox(tr[direction])
+
         # Apply profile weights in-place
-        for i in range(19):
+        for i in range(26):
             out[i] *= weights[i]
 
 
@@ -376,7 +418,7 @@ if _NUMBA_OK:
         turns       = 0
 
         activations = np.zeros(n_nodes, dtype=np.float64)
-        sensors_out = np.zeros(19, dtype=np.float64)
+        sensors_out = np.zeros(26, dtype=np.float64)
         body_map    = np.zeros((_FS, _FS), dtype=np.int8)
         n_active    = len(active_indices)
 

@@ -47,6 +47,13 @@ TURN_RIGHT = {
     Direction.UP    : Direction.RIGHT,
 }
 
+TURN_BACK = {
+    Direction.RIGHT : Direction.LEFT,
+    Direction.LEFT  : Direction.RIGHT,
+    Direction.UP    : Direction.DOWN,
+    Direction.DOWN  : Direction.UP,
+}
+
 
 # -------------------------------------------------------
 # MoveHelper
@@ -203,6 +210,8 @@ class MoveHelper :
             abs_dir = self.game.direction
         elif direction == self.LEFT :
             abs_dir = TURN_LEFT[self.game.direction]
+        elif direction == self.BACKWARD :
+            abs_dir = TURN_BACK[self.game.direction]
         else :
             abs_dir = TURN_RIGHT[self.game.direction]
 
@@ -213,6 +222,52 @@ class MoveHelper :
             x = (x + dx) % FIELDSIZE
             y = (y + dy) % FIELDSIZE
             if (x, y) in body_set :
+                return 1.0 - dist / FIELDSIZE
+        return 0.0
+
+    def wall_proximity(self, direction: str) -> float :
+        """0.0–1.0: proximity of the nearest non-passable cell (wall, explosion, or own body)
+        along a ray. 0.9 = 1 cell away, 0.0 = nothing on that axis (or axis is clear)."""
+        if direction == self.FORWARD :
+            abs_dir = self.game.direction
+        elif direction == self.LEFT :
+            abs_dir = TURN_LEFT[self.game.direction]
+        elif direction == self.BACKWARD :
+            abs_dir = TURN_BACK[self.game.direction]
+        else :
+            abs_dir = TURN_RIGHT[self.game.direction]
+
+        body_set = set((s[0], s[1]) for s in self.game.snake[1:])
+        dx, dy   = DIR_DELTA[abs_dir]
+        x, y     = self.game.snake[0]
+        for dist in range(1, FIELDSIZE) :
+            x = (x + dx) % FIELDSIZE
+            y = (y + dy) % FIELDSIZE
+            if self.game.grid[y][x] != FieldType.FREE or (x, y) in body_set :
+                return 1.0 - dist / FIELDSIZE
+        return 0.0
+
+    def explosion_proximity(self, direction: str) -> float :
+        """0.0–1.0: proximity of the nearest active explosion cell along a ray.
+        0.0 if no explosion is active or none found in this direction."""
+        if not self.game.explosion :
+            return 0.0
+
+        if direction == self.FORWARD :
+            abs_dir = self.game.direction
+        elif direction == self.LEFT :
+            abs_dir = TURN_LEFT[self.game.direction]
+        elif direction == self.BACKWARD :
+            abs_dir = TURN_BACK[self.game.direction]
+        else :
+            abs_dir = TURN_RIGHT[self.game.direction]
+
+        dx, dy = DIR_DELTA[abs_dir]
+        x, y   = self.game.snake[0]
+        for dist in range(1, FIELDSIZE) :
+            x = (x + dx) % FIELDSIZE
+            y = (y + dy) % FIELDSIZE
+            if self.game.grid[y][x] == FieldType.EXPLODED :
                 return 1.0 - dist / FIELDSIZE
         return 0.0
 
@@ -315,25 +370,34 @@ class MoveHelper :
 
 
 # Ordered mapping from sensor name to callable — must match profiles.py key order.
+# NEW sensors must be added at the BOTTOM to keep old 19-input networks compatible.
 SENSOR_FUNCS: dict = {
-    "can_move_forward" : lambda h: 1 if h.can_move(h.FORWARD) else 0,
-    "can_move_left"    : lambda h: 1 if h.can_move(h.LEFT)    else 0,
-    "can_move_right"   : lambda h: 1 if h.can_move(h.RIGHT)   else 0,
-    "is_food_forward"  : lambda h: h.is_food(h.FORWARD),
-    "is_food_left"     : lambda h: h.is_food(h.LEFT),
-    "is_food_right"    : lambda h: h.is_food(h.RIGHT),
-    "is_bomb_forward"  : lambda h: h.is_bomb(h.FORWARD),
-    "is_bomb_left"     : lambda h: h.is_bomb(h.LEFT),
-    "is_bomb_right"    : lambda h: h.is_bomb(h.RIGHT),
-    "food_timer"       : lambda h: h.food_timer_normalized(),
-    "bomb_timer"       : lambda h: h.bomb_timer_normalized(),
-    "explosion_active" : lambda h: h.explosion_active(),
-    "food_distance"    : lambda h: h.food_distance_normalized(),
-    "snake_length"     : lambda h: h.snake_length_normalized(),
-    "body_forward"     : lambda h: h.body_proximity(h.FORWARD),
-    "body_left"        : lambda h: h.body_proximity(h.LEFT),
-    "body_right"       : lambda h: h.body_proximity(h.RIGHT),
-    "is_food_backward" : lambda h: h.is_food(h.BACKWARD),
-    "is_bomb_backward" : lambda h: h.is_bomb(h.BACKWARD),
+    "can_move_forward"   : lambda h: 1 if h.can_move(h.FORWARD) else 0,
+    "can_move_left"      : lambda h: 1 if h.can_move(h.LEFT)    else 0,
+    "can_move_right"     : lambda h: 1 if h.can_move(h.RIGHT)   else 0,
+    "is_food_forward"    : lambda h: h.is_food(h.FORWARD),
+    "is_food_left"       : lambda h: h.is_food(h.LEFT),
+    "is_food_right"      : lambda h: h.is_food(h.RIGHT),
+    "is_bomb_forward"    : lambda h: h.is_bomb(h.FORWARD),
+    "is_bomb_left"       : lambda h: h.is_bomb(h.LEFT),
+    "is_bomb_right"      : lambda h: h.is_bomb(h.RIGHT),
+    "food_timer"         : lambda h: h.food_timer_normalized(),
+    "bomb_timer"         : lambda h: h.bomb_timer_normalized(),
+    "explosion_active"   : lambda h: h.explosion_active(),
+    "food_distance"      : lambda h: h.food_distance_normalized(),
+    "snake_length"       : lambda h: h.snake_length_normalized(),
+    "body_forward"       : lambda h: h.body_proximity(h.FORWARD),
+    "body_left"          : lambda h: h.body_proximity(h.LEFT),
+    "body_right"         : lambda h: h.body_proximity(h.RIGHT),
+    "is_food_backward"   : lambda h: h.is_food(h.BACKWARD),
+    "is_bomb_backward"   : lambda h: h.is_bomb(h.BACKWARD),
+    # ── New sensors (index 19+) ─────────────────────────────────────────────
+    "body_backward"      : lambda h: h.body_proximity(h.BACKWARD),
+    "wall_forward"       : lambda h: h.wall_proximity(h.FORWARD),
+    "wall_left"          : lambda h: h.wall_proximity(h.LEFT),
+    "wall_right"         : lambda h: h.wall_proximity(h.RIGHT),
+    "explosion_forward"  : lambda h: h.explosion_proximity(h.FORWARD),
+    "explosion_left"     : lambda h: h.explosion_proximity(h.LEFT),
+    "explosion_right"    : lambda h: h.explosion_proximity(h.RIGHT),
 }
 

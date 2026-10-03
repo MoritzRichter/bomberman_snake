@@ -23,10 +23,10 @@ Phase 2 · Evolution
     If yes  -> update seed & prev_median, continue.
     If no   -> retry with the same seed (failure_count += 1).
     After MAX_FAILURES consecutive failures:
-        Save Eternity package to  runs/eternity_deep/<timestamp>/
+        Save Eternity package to  Eternity-Deep/<timestamp>/
         Restart from Phase 1.
 
-Outputs per saved package (inside runs/eternity_deep/<timestamp>_run<N>/):
+Outputs per saved package (inside Eternity-Deep/<timestamp>_run<N>/):
     veteran_<timestamp>.pkl
     elite_<timestamp>.pkl
     training_report_<timestamp>.csv   (from the last improving run)
@@ -56,17 +56,17 @@ import evolution as _evo
 GAMES_COUNT          = 50
 GENERATIONS_PER_RUN  = 300
 LEVEL                = 1
-PROFILE_NAME         = "full"
+PROFILE_NAME         = "extended"
 
 SELECTION_STRATEGY   = "power"      # "power" or "tournament"
 SELECTION_POWER      = 2            # lower than eternity.py (was 4) — gives structural mutants room to survive
 TOURNAMENT_K         = 5            # candidates drawn per tournament (higher = more selective)
-SCORING_MODE         = "balanced"   # "balanced" | "survival" | "food" | "length"
+SCORING_MODE         = "length"   # "balanced" | "survival" | "food" | "length"
 ELITISM_RATE         = 0.2
 
 _USE_JIT: bool = True   # set by _startup_menu(); passed into worker args
 
-BOOTSTRAP_THRESHOLD  = 800.0   # bootstrap passes when best_score > this in last WINDOW gens
+BOOTSTRAP_THRESHOLD  = 300.0   # bootstrap passes when best_score > this in last WINDOW gens
 IMPROVEMENT_FACTOR   = 1.05     # each evolution run must raise median by this factor
 WINDOW               = 5        # tail window (number of gens) for evaluating a run
 MAX_FAILURES         = 15        # consecutive failures before saving and restarting
@@ -129,7 +129,7 @@ RENDER_FPS       = 60      # display refresh rate for the visual window
 MAX_VISUAL_TICKS = 3000    # cap each inter-generation demo at this many game ticks
 
 _HERE           = os.path.dirname(os.path.abspath(__file__))
-ETERNITY_DIR    = os.path.join(_HERE, "runs", "eternity_deep")
+ETERNITY_DIR    = os.path.join(_HERE, "Eternity-Deep")
 _SUMMARY_PATH   = os.path.join(ETERNITY_DIR, "eternity_summary.csv")
 _CHECKPOINT_DIR = os.path.join(ETERNITY_DIR, "checkpoint")
 _PROGRESS_PATH  = os.path.join(_CHECKPOINT_DIR, "progress.csv")
@@ -717,7 +717,7 @@ def save_eternity_package(
     successful_improvements: int,
     boot_attempts: int,
 ):
-    """Write veteran + seeds + CSV into a timestamped runs/eternity_deep sub-folder, then update summary."""
+    """Write veteran + seeds + CSV into a timestamped Eternity-Run sub-folder, then update summary."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     folder    = os.path.join(ETERNITY_DIR, f"{timestamp}_run{run_index:03d}")
     os.makedirs(folder, exist_ok=True)
@@ -746,7 +746,7 @@ def save_eternity_package(
     print(f"       elite     : {os.path.basename(seed_path)}")
     print(f"       report    : {os.path.basename(csv_path)}")
     if os.path.isfile(_PROGRESS_PATH):
-        print("       progress  : progress.csv")
+        print(f"       progress  : progress.csv")
 
     update_run_summary({
         "run_index"              : run_index,
@@ -828,8 +828,8 @@ def _pick_elite_seed():
     import glob as _glob
     patterns = [
         os.path.join(ETERNITY_DIR, "**", "elite*.pkl"),
-        os.path.join(_HERE, "runs", "eternity", "**", "elite*.pkl"),
-        os.path.join(_HERE, "models", "seeds", "*.pkl"),
+        os.path.join(_HERE, "Eternity-Run", "**", "elite*.pkl"),
+        os.path.join(_HERE, "seeds", "*.pkl"),
     ]
     files = []
     for pat in patterns:
@@ -863,11 +863,16 @@ def _pick_elite_seed():
     print(f"  {len(brains)} Gehirne geladen: {os.path.relpath(path, _HERE)}")
 
     progress_csv = os.path.join(os.path.dirname(path), "progress.csv")
-    prev_median, _ = _read_median_from_progress(progress_csv)
+    prev_median, gen_offset = _read_median_from_progress(progress_csv)
     if prev_median > 0.0:
         print(f"  Median aus progress.csv (letzte {WINDOW} Gens): {prev_median:.2f}")
+        print(f"  Fortschritt fortgesetzt ab Generation {gen_offset}")
+        os.makedirs(_CHECKPOINT_DIR, exist_ok=True)
+        shutil.copy2(progress_csv, _PROGRESS_PATH)
     else:
-        print("  Kein progress.csv im Seed-Ordner — starte mit Median 0.0")
+        print(f"  Kein progress.csv im Seed-Ordner — starte mit Median 0.0")
+        if os.path.isfile(_PROGRESS_PATH):
+            os.remove(_PROGRESS_PATH)
 
     print(f"  -> Seed geladen, prev_median = {prev_median:.2f}")
     return {
@@ -875,7 +880,7 @@ def _pick_elite_seed():
         "brains"     : brains,
         "prev_median": prev_median,
         "veteran"    : None,
-        "gen_offset" : 0,
+        "gen_offset" : gen_offset,
     }
 
 
@@ -939,19 +944,19 @@ def main():
           f"Max failures: {MAX_FAILURES}")
     print(f"Adaptive mutations: EXPLORE (structural) -> EXPLOIT (weights) after {SWITCH_TO_EXPLOIT_AFTER} failures")
 
-    _startup_seed = _startup_menu()   # None = fresh start, dict = seeded/checkpoint
+    _startup_seed         = _startup_menu()   # None = fresh start, dict = seeded/checkpoint
+    _initial_startup_seed = _startup_seed     # fallback for complete failure
 
     try:
       while True:
         run_index += 1
         gen_offset = 0
-        # Keep progress CSV when resuming from checkpoint; clear it otherwise
-        _is_checkpoint = (
-            run_index == 1
-            and isinstance(_startup_seed, dict)
-            and _startup_seed.get("mode") == "checkpoint"
+        # Keep progress CSV when resuming from checkpoint or seed; clear for fresh Bootstrap
+        _keep_progress = (
+            isinstance(_startup_seed, dict)
+            and _startup_seed.get("mode") in ("checkpoint", "seed")
         )
-        if not _is_checkpoint and os.path.isfile(_PROGRESS_PATH):
+        if not _keep_progress and os.path.isfile(_PROGRESS_PATH):
             os.remove(_PROGRESS_PATH)
 
         _banner(f"ETERNITY RUN #{run_index}")
@@ -960,7 +965,7 @@ def main():
         _apply_mutation_mode(mutation_mode)
 
         # ── Phase 1: Bootstrap — or skip if seed/checkpoint was loaded ──────
-        if _startup_seed is not None and run_index == 1:
+        if _startup_seed is not None:
             loaded_mode    = _startup_seed["mode"]
             loaded_brains  = _startup_seed["brains"]
             loaded_median  = _startup_seed["prev_median"]
@@ -1002,13 +1007,13 @@ def main():
                     f"median: {boot_median:.2f}"
                 )
                 if max_best > BOOTSTRAP_THRESHOLD:
-                    print("  ✓  Bootstrap passed!")
+                    print(f"  ✓  Bootstrap passed!")
                     save_checkpoint(veteran, sorted_brains[:max(ELITISM, 1)], results,
                                     label=f"run{run_index} bootstrap")
                     _append_progress(results, gen_offset)
                     gen_offset += GENERATIONS_PER_RUN
                     break
-                print("  ✗  Bootstrap failed — restarting from scratch")
+                print(f"  ✗  Bootstrap failed — restarting from scratch")
 
             current_seed          = sorted_brains[:max(ELITISM, 1)]
             prev_median           = boot_median
@@ -1066,7 +1071,7 @@ def main():
                 if mutation_mode != "explore":
                     mutation_mode = "explore"
                     _apply_mutation_mode(mutation_mode)
-                    print("  [EXPLORE] Mutation mode -> EXPLORE (improvement found)")
+                    print(f"  [EXPLORE] Mutation mode -> EXPLORE (improvement found)")
                 prev_median             = new_median
                 current_seed            = sorted_brains[:max(ELITISM, 1)]
                 best_veteran            = veteran
@@ -1091,7 +1096,7 @@ def main():
         _banner(f"RUN #{run_index} COMPLETE — {MAX_FAILURES} consecutive failures reached")
         print(f"  Best achieved median : {prev_median:.2f}")
         print(f"  Evolution rounds     : {evo_round}")
-        print("  Saving Eternity package ...")
+        print(f"  Saving Eternity package ...")
         save_eternity_package(
             run_index, best_veteran, last_good_elite, last_good_results,
             final_elite_median      = prev_median,
@@ -1100,7 +1105,29 @@ def main():
             boot_attempts           = boot_attempt,
         )
         show_eternity_graphs()
-        print("\n  Restarting from scratch (Phase 1)...")
+
+        if last_good_elite:
+            print(f"\n  Starte neuen Versuch mit dem eben gespeicherten Seed "
+                  f"(median: {prev_median:.2f})...")
+            _startup_seed = {
+                "mode"       : "seed",
+                "brains"     : list(last_good_elite),
+                "prev_median": prev_median,
+                "veteran"    : best_veteran,
+                "gen_offset" : gen_offset,
+            }
+        elif _initial_startup_seed is not None:
+            print(f"\n  Kompletter Fehlschlag — lade urspruenglichen Startup-Seed...")
+            _startup_seed = {
+                "mode"       : _initial_startup_seed["mode"],
+                "brains"     : list(_initial_startup_seed["brains"]),
+                "prev_median": _initial_startup_seed.get("prev_median", 0.0),
+                "veteran"    : _initial_startup_seed.get("veteran"),
+                "gen_offset" : _initial_startup_seed.get("gen_offset", 0),
+            }
+        else:
+            print(f"\n  Kein Seed verfuegbar — starte Phase 1 (Bootstrap)")
+            _startup_seed = None
 
     finally:
         if pool_ctx is not None:

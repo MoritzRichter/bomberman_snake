@@ -59,14 +59,18 @@ def crossover(network1: Network, network2: Network, equal) :
 # --- Helper-Functions --------------------------------------------------------------
 
 #Creates empty child with input/output size equal to fittest parent
-def createOffspringFoundation(network: Network) :
-    offspringFoundation = buildNetwork(network.input_size, network.output_size)
-    offspringFoundation.connections = []
-    offspringFoundation.nodes = []
-    offspringFoundation.input_nodes = set()
-    offspringFoundation.output_nodes = set()
-
-    return offspringFoundation
+def createOffspringFoundation(network: Network):
+    off              = Network.__new__(Network)
+    off.input_size   = network.input_size
+    off.output_size  = network.output_size
+    off.nodes        = []
+    off.connections  = []
+    off.input_nodes  = set()
+    off.output_nodes = set()
+    off.score        = None
+    off.longevity    = 0
+    off.size         = 0
+    return off
 
 
 #Determines amount of hidden nodes for child. Takes size of fitter parent. 

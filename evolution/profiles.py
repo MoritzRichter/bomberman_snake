@@ -142,6 +142,38 @@ PROFILES: dict[str, dict[str, float]] = {
         "body_left"        : 1.5,
         "body_right"       : 1.5,
     },
+
+    # 26 inputs — full + wall distances + explosion direction + body backward
+    # First 19 sensors are identical to "full" (old networks stay compatible).
+    "extended": {
+        "can_move_forward"  : 1.0,
+        "can_move_left"     : 1.0,
+        "can_move_right"    : 1.0,
+        "is_food_forward"   : 1.0,
+        "is_food_left"      : 1.0,
+        "is_food_right"     : 1.0,
+        "is_food_backward"  : 1.0,
+        "is_bomb_forward"   : 1.0,
+        "is_bomb_left"      : 1.0,
+        "is_bomb_right"     : 1.0,
+        "is_bomb_backward"  : 1.0,
+        "food_timer"        : 2.0,
+        "bomb_timer"        : 2.0,
+        "explosion_active"  : 1.0,
+        "food_distance"     : 1.0,
+        "snake_length"      : 1.0,
+        "body_forward"      : 1.5,
+        "body_left"         : 1.5,
+        "body_right"        : 1.5,
+        # ── New sensors (index 19+) ────────────────────────
+        "body_backward"     : 1.5,
+        "wall_forward"      : 2.0,
+        "wall_left"         : 2.0,
+        "wall_right"        : 2.0,
+        "explosion_forward" : 2.0,
+        "explosion_left"    : 2.0,
+        "explosion_right"   : 2.0,
+    },
 }
 
 

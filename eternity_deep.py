@@ -23,10 +23,10 @@ Phase 2 · Evolution
     If yes  -> update seed & prev_median, continue.
     If no   -> retry with the same seed (failure_count += 1).
     After MAX_FAILURES consecutive failures:
-        Save Eternity package to  Eternity-Deep/<timestamp>/
+        Save Eternity package to  runs/eternity_deep/<timestamp>/
         Restart from Phase 1.
 
-Outputs per saved package (inside Eternity-Deep/<timestamp>_run<N>/):
+Outputs per saved package (inside runs/eternity_deep/<timestamp>_run<N>/):
     veteran_<timestamp>.pkl
     elite_<timestamp>.pkl
     training_report_<timestamp>.csv   (from the last improving run)
@@ -129,7 +129,7 @@ RENDER_FPS       = 60      # display refresh rate for the visual window
 MAX_VISUAL_TICKS = 3000    # cap each inter-generation demo at this many game ticks
 
 _HERE           = os.path.dirname(os.path.abspath(__file__))
-ETERNITY_DIR    = os.path.join(_HERE, "Eternity-Deep")
+ETERNITY_DIR    = os.path.join(_HERE, "runs", "eternity_deep")
 _SUMMARY_PATH   = os.path.join(ETERNITY_DIR, "eternity_summary.csv")
 _CHECKPOINT_DIR = os.path.join(ETERNITY_DIR, "checkpoint")
 _PROGRESS_PATH  = os.path.join(_CHECKPOINT_DIR, "progress.csv")
